@@ -40,6 +40,7 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 | `memory_consolidate` | 近重复合并建议 + 容量预算 | 不需要 |
 | `memory_import` | 从历史会话日志导入候选事实 | 需要（逐条） |
 | `memory_profile` | 读取常驻注入的工作区档案 | 不需要 |
+| `memory_export` | 写出 git 友好的 Markdown 镜像（`.dsh-memory/memory.md`，已打码、幂等） | 不需要 |
 
 每条事实都记录来源 `(sessionId, seq)`——记忆始终可从无损会话日志还原。
 

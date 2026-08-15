@@ -123,7 +123,13 @@ import candidate facts from a past session's log by literal query match, one
 approval ask per fact, stored with the original `(sessionId, seq)` provenance.
 `memory_expand` (v0.3.0) — read-only: expand one fact's citation (or an
 explicit session_id + seq) back to the original session-log excerpt around
-the cited event, exact-cwd authorized, zero LLM.
+the cited event, exact-cwd authorized, zero LLM. `memory_export` (v0.3.0) —
+read-only projection: writes a git-friendly, secret-masked Markdown mirror
+to `<cwd>/.dsh-memory/memory.md`, deterministic and idempotent
+(content-addressed, atomic temp+rename); the storage domain stays the single
+source of truth and the file is never synced back, so no approval is
+involved — the export exposes nothing memory_recall / memory_search could
+not already reveal.
 
 Tool count trades prompt cost against capability; keep the set closed until
 usage data says otherwise.

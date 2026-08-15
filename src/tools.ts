@@ -9,7 +9,7 @@
 //     execute(args, exec: ToolRunContext): Promise<unknown>,
 //   }
 //
-// Tool set (nine tools — the design §5 list plus consolidation, import, expand):
+// Tool set (ten tools — the design §5 list plus consolidation, import, expand, export):
 //
 //   memory_remember  (write, approval-gated) — add or update one fact (or one
 //                    workspace profile entry) in the caller's workspace.
@@ -44,6 +44,7 @@ import type { ConfigType } from './config.ts'
 import type { Fact, MemoryDomain } from './domain.ts'
 import { suggestConsolidations } from './domain.ts'
 import { MemoryError, hasCode } from './errors.ts'
+import { renderExport, writeExport } from './export.ts'
 import { detectSecrets, maskSecrets } from './redaction.ts'
 import type { CallerAgent, SessionEventLike, SessionQueryServiceLike, ToolExec } from './types.ts'
 
@@ -274,7 +275,7 @@ export function eventText(event: SessionEventLike): string {
 /** Excerpt window around the cited seq: the event itself plus one neighbour each side. */
 const EXPAND_WINDOW_CHARS = 2000
 
-/** Register all nine tools; returns the composite disposer. */
+/** Register all ten tools; returns the composite disposer. */
 export function registerMemoryTools(ctx: Context, service: MemoryService): () => void {
   return ctx.effect(() => {
     const disposers: Array<() => void> = [
@@ -647,6 +648,38 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             ? `citation ${sessionId}#${seq}`
             : `fact ${fact.id} [${fact.kind}] — ${truncate(maskSecrets(fact.text), 400)}`
           return `${head}\ncited to session ${sessionId}#${seq}${range}:\n\n${excerpt}`
+        },
+      }),
+
+      ctx.tools.register({
+        name: 'memory_export',
+        description:
+          'Export this workspace\'s facts and profile to a git-friendly Markdown mirror at .dsh-memory/memory.md inside the workspace '
+          + '(secrets masked). Read-only projection: the storage domain stays the source of truth and the file is never synced back. '
+          + 'Deterministic and idempotent — an unchanged export is not rewritten. No approval needed: the same data is already '
+          + 'readable via memory_recall / memory_search.',
+        parameters: { type: 'object', properties: {} },
+        output: TEXT_OUTPUT,
+        timeoutMs: 30_000,
+        execute: async (_rawArgs, exec) => {
+          const caller = callerOf(exec as ToolExec)
+          const domain = await openDomain(service)
+          const facts = domain.listActive(caller.cwd)
+          const profile = domain.getProfile(caller.cwd)
+          const content = renderExport(facts, profile)
+          let result
+          try {
+            result = await writeExport(caller.cwd, content)
+          } catch (error) {
+            throw new MemoryError(
+              'MEMORY_UNAVAILABLE',
+              `memory_export: could not write the mirror: ${String(error instanceof Error ? error.message : error)}`,
+              { cause: error },
+            )
+          }
+          const unchanged = result.rewrote ? '' : ', unchanged (idempotent skip)'
+          return `exported ${facts.length} fact(s) and ${profile.entries.length} profile entries to ${result.path} `
+            + `(${result.bytes} bytes${unchanged})`
         },
       }),
 
