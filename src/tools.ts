@@ -400,8 +400,9 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
       ctx.tools.register({
         name: 'memory_recall',
         description:
-          'Deterministic scan over this workspace\'s active facts: text matches rank first, tags second, recency breaks ties. '
-          + 'Pass a query to filter; omit it to list the newest facts.',
+          'Deterministic keyword scan over this workspace\'s active facts: exact tag matches rank first, case-insensitive text '
+          + 'substring next, recency breaks ties. Matching is literal, not semantic — query in the language the fact is likely '
+          + 'written in, or try both languages. Pass a query to filter; omit it to list the newest facts.',
         parameters: {
           type: 'object',
           properties: {
