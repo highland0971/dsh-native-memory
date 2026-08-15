@@ -19,12 +19,22 @@
 // prompt content silently — the human sees every write before it lands. This
 // is the direct answer to the injection weakness found in dsh-hermes-memory.
 
-import type { Agent } from '@deepseek-ai/dsh-agent' // TODO(verify): exported type path
 import type { Context } from '@deepseek-ai/cordis'
+
+// The real approval API takes the harness `Agent` object
+// (packages/interaction/user-approval/src/index.ts). Its type lives in
+// @deepseek-ai/dsh-agent — not yet published standalone; during
+// implementation (docs/handoff.md step 1), either add it as a devDependency
+// from the harness repo or keep this structural minimum and cast at the call
+// site. The scaffold keeps the module typechecking without that dependency.
+export interface AgentRef {
+  /** Session-scoped identity the approval service routes by. */
+  readonly id: string
+}
 
 export interface ApprovalGate {
   request: (req: {
-    agent: Agent
+    agent: AgentRef
     toolName: string
     reason: string
   }) => Promise<boolean> // true = approved and applied

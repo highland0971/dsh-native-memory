@@ -1,30 +1,44 @@
 #!/usr/bin/env node
-// Quick static checks for the bundle patch before installing it on a real
+// Static checks for the bundle patch before installing it on a real
 // deployment:
 //   node scripts/verify-bundle.mjs
-// Parses cordis.patch.yml, checks the two entries' shape, and verifies the
-// plugin row references a resolvable package specifier.
+//
+// Parses cordis.patch.yml with the EXACT dialect the harness loader uses
+// (js-yaml JSON_SCHEMA extended with the `!!js` expression node — see
+// vendor/include/src/yaml.ts in the deepseek-harness checkout), then
+// shape-checks the two entries.
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse as parseYaml } from 'yaml'
+import * as yaml from 'js-yaml'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const doc = parseYaml(readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8'))
+
+const isJsExpr = (data) => data !== null && typeof data === 'object' && typeof data.__jsExpr === 'string'
+const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
+  kind: 'scalar',
+  resolve: (data) => typeof data === 'string',
+  construct: (data) => ({ __jsExpr: data }),
+  predicate: isJsExpr,
+  represent: (data) => data.__jsExpr,
+})
+const schema = yaml.JSON_SCHEMA.extend(JsExpr)
+
+const doc = yaml.load(readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8'), { schema })
 
 const failures = []
 if (!Array.isArray(doc)) failures.push('cordis.patch.yml must be a top-level array of patch entries')
 
 for (const entry of doc ?? []) {
   if (entry.id !== undefined) {
-    // id-targeted config override — fine.
     if (entry.id === 'session-query-sqlite') {
       const c = entry.config ?? {}
       if (c.openAt !== 'first-search' && c.openAt !== 'startup') {
         failures.push('session-query-sqlite patch must set openAt to first-search or startup')
       }
-      if (typeof c.path !== 'string' || c.path === '') {
-        failures.push('session-query-sqlite patch must set a durable path (path is !!js, string check is loose)')
+      const path = c.path
+      if (!(typeof path === 'string') && !(path?.__jsExpr)) {
+        failures.push('session-query-sqlite patch must set a durable path (string or !!js expression)')
       }
     }
   } else if (entry.insert !== undefined) {
@@ -43,4 +57,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(' -', f)
   process.exit(1)
 }
-console.log('bundle patch checks passed (static)')
+console.log('bundle patch checks passed (harness-loader dialect, static)')

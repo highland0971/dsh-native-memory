@@ -14,7 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 import { Config, type ConfigType } from './config.ts'
-import { openMemoryDomain, type MemoryDomain } from './domain.ts'
+import type { MemoryDomain } from './domain.ts'
 import { registerMemoryTools } from './tools.ts'
 import { registerProfileSection } from './prompt.ts'
 

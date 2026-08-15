@@ -67,10 +67,20 @@ Prepared 2026-08-15 for a fresh session in this workspace. Read
   root `~/.dsh/storages`; session-query-sqlite currently
   `path: ':memory:', openAt: never`.
 - Sandbox: `workspace-write`, workspace `/home/dsh/projects`; approval: ask.
+- **Sandbox note**: package-manager home caches are outside the workspace, so
+  use workspace-local stores in this environment:
+  `pnpm install --store-dir ./.pnpm-store --cache-dir ./.pnpm-cache` and
+  `npm pack --dry-run --cache ./.npm-cache` (both already gitignored).
+- Scaffold verified today: `pnpm typecheck` ✅, `pnpm build` ✅ (emits
+  lib/index.mjs + index.d.mts), `pnpm test` ✅ (2 placeholder tests),
+  `pnpm lint` ✅ (0 errors), `node scripts/verify-bundle.mjs` ✅ (harness
+  loader dialect), `npm pack --dry-run` ✅ (7 files incl. patch + lib).
+  Registry facts: `@deepseek-ai/cordis` latest = 4.0.1; zod pinned ^4.4.3.
 - Useful references inside the checkout: `packages/storage/storage-domain`,
   `packages/session-query/{session-query-sqlite,tool-session-query}`,
   `packages/interaction/user-approval`, `packages/core/{tools,system-prompt}`,
-  `packages/bundle/base/cordis.patch.yml`.
+  `packages/bundle/base/cordis.patch.yml`, `vendor/include/src/yaml.ts`
+  (the `!!js` dialect).
 
 ## Definition of done
 

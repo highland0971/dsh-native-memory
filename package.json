@@ -4,19 +4,19 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "main": "lib/index.mjs",
+  "types": "lib/index.d.mts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
+      "types": "./lib/index.d.mts",
+      "default": "./lib/index.mjs"
     },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
-    "lib/index.js",
-    "lib/types/**/*.d.ts",
+    "lib/index.mjs",
+    "lib/index.d.mts",
     "cordis.patch.yml"
   ],
   "repository": {
@@ -50,15 +50,16 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=2 <4"
+    "@deepseek-ai/cordis": "^4.0.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^2.0.0",
-    "oxlint": "^1.0.0",
-    "tsdown": "^0.14.0",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@types/node": "^22.0.0",
+    "js-yaml": "^4.1.0",
+    "oxlint": "^1.78.0",
+    "tsdown": "^0.22.14",
     "typescript": "^5.8.0",
-    "vitest": "^3.0.0",
-    "yaml": "^2.8.0"
+    "vitest": "^4.1.10"
   },
   "publishConfig": {
     "access": "public"

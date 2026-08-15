@@ -7,3 +7,9 @@ coverage/
 .DS_Store
 npm-debug.log*
 pnpm-debug.log*
+
+# sandbox-local package-manager caches (this environment cannot use the
+# default home caches; keep them out of the repo)
+.pnpm-store/
+.pnpm-cache/
+.npm-cache/
