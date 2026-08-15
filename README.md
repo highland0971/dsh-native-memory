@@ -36,7 +36,7 @@ the memory tools to every session. Details and configuration:
 
 | Tool | Kind | Gate |
 |---|---|---|
-| `memory_remember` | add/update a fact in this workspace | approval |
+| `memory_remember` | add/update a fact in this workspace (secrets rejected by default) | approval |
 | `memory_edit` | replace a fact | approval |
 | `memory_forget` | archive a fact (soft delete) | approval |
 | `memory_recall` | deterministic three-tier keyword scan (tags > text > fuzzy; freshness/access tie-breaks) | none |
@@ -48,6 +48,11 @@ the memory tools to every session. Details and configuration:
 
 Every fact records its origin `(sessionId, seq)` — memory stays
 reconstructable from the lossless session log.
+
+Writes reject secret-shaped text (tokens / keys / passwords) by default;
+`secretPolicy: "mask" | "off"` in the bundle patch relaxes that. The
+credential-assignment detector can flag benign `token: …` values of ≥16
+characters. Prompt injection and tool output always mask secrets.
 
 ## Development
 

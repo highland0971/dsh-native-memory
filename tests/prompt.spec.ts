@@ -90,6 +90,13 @@ describe('renderProfile', () => {
   it('renders empty for an empty profile', () => {
     expect(renderProfile([], WS)).toBe('')
   })
+
+  it('masks secret-shaped entries on the injection path, regardless of policy', () => {
+    const secret = `ghp_${'a'.repeat(36)}`
+    const text = renderProfile([`the push token is ${secret}`], WS)
+    expect(text).toContain('[REDACTED]')
+    expect(text).not.toContain('ghp_')
+  })
 })
 
 describe('registerProfileSection', () => {

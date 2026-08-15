@@ -417,6 +417,86 @@ describe('memory tools', () => {
     expect(harness.domain.getFact(WS, fact.id)?.accessCount).toBe(1)
   })
 
+  it('memory_remember rejects secret-shaped facts before any approval ask', async () => {
+    const { box, asks } = await toolkit()
+    const secret = `ghp_${'a'.repeat(36)}`
+    await expectMemoryError(
+      call(box, 'memory_remember', { text: `the push token is ${secret}`, kind: 'fact' }, execFor()),
+      'MEMORY_SECRET_REJECTED',
+    )
+    expect(asks).toHaveLength(0)
+  })
+
+  it('memory_remember masks secrets under secretPolicy:"mask" and stores the masked text', async () => {
+    const { box, harness, asks } = await toolkit({ config: { secretPolicy: 'mask' } })
+    const secret = `ghp_${'a'.repeat(36)}`
+    const result = await call(box, 'memory_remember', { text: `the push token is ${secret}`, tags: ['cred'] }, execFor())
+    expect(String(result)).toContain('stored fact')
+    expect(asks).toHaveLength(1)
+    const facts = harness.domain.listActive(WS)
+    expect(facts[0]?.text).toContain('[REDACTED]')
+    expect(facts[0]?.text).not.toContain('ghp_')
+  })
+
+  it('memory_edit rejects secret-shaped replacement text before any approval ask', async () => {
+    const { box, harness, asks } = await toolkit()
+    const fact = await harness.domain.remember(makeFact({ workspacePath: WS, text: 'clean' }))
+    await expectMemoryError(
+      call(box, 'memory_edit', { id: fact.id, text: `npm_${'b'.repeat(36)}` }, execFor()),
+      'MEMORY_SECRET_REJECTED',
+    )
+    expect(asks).toHaveLength(0)
+  })
+
+  it('memory_import skips secret candidates under reject policy without approval', async () => {
+    const { box, harness, asks, readSessionImpl } = await toolkit()
+    readSessionImpl.mockResolvedValueOnce({
+      session: { id: 'past-sess', cwd: WS },
+      events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: `keep this: token: ${'x'.repeat(16)}` }] } }],
+    })
+    const result = await call(box, 'memory_import', { session_id: 'past-sess', query: 'keep this', limit: 3 }, execFor())
+    expect(String(result)).toContain('1 secret candidate(s) skipped')
+    expect(asks).toHaveLength(0)
+    expect(harness.domain.activeCount(WS)).toBe(0)
+  })
+
+  it('recall and profile echo mask secrets stored under secretPolicy:"off"', async () => {
+    const { box, harness } = await toolkit({ config: { secretPolicy: 'off' } })
+    const secret = `ghp_${'a'.repeat(36)}`
+    await harness.domain.remember(makeFact({ workspacePath: WS, text: `token ${secret}` }))
+    const recall = await call(box, 'memory_recall', { query: 'token' }, execFor())
+    expect(String(recall)).toContain('[REDACTED]')
+    expect(String(recall)).not.toContain('ghp_')
+    await harness.domain.putProfile({ workspacePath: WS, entries: [`pwd is ${secret}`], updatedAt: Date.now() })
+    const profile = await call(box, 'memory_profile', {}, execFor())
+    expect(String(profile)).toContain('[REDACTED]')
+    expect(String(profile)).not.toContain('ghp_')
+  })
+
+  it('memory_consolidate masks stored secrets in its merge suggestions', async () => {
+    const { box, harness } = await toolkit({ config: { secretPolicy: 'off' } })
+    const secret = `ghp_${'a'.repeat(36)}`
+    await harness.domain.remember(makeFact({ workspacePath: WS, text: `token ${secret} shared words here` }))
+    await harness.domain.remember(makeFact({ workspacePath: WS, text: `token ${secret} shared words there` }))
+    const result = await call(box, 'memory_consolidate', {}, execFor())
+    expect(String(result)).toContain('Merge candidates')
+    expect(String(result)).toContain('[REDACTED]')
+    expect(String(result)).not.toContain('ghp_')
+  })
+
+  it('memory_expand head masks stored secrets', async () => {
+    const { box, harness, readSessionImpl } = await toolkit({ config: { secretPolicy: 'off' } })
+    const secret = `ghp_${'a'.repeat(36)}`
+    const fact = await harness.domain.remember(makeFact({ workspacePath: WS, sessionId: 'past-sess', seq: 7, text: `token ${secret}` }))
+    readSessionImpl.mockResolvedValueOnce({
+      session: { id: 'past-sess', cwd: WS },
+      events: [{ type: 'user/message', seq: 7, data: { content: [{ type: 'text', text: 'the log is clean' }] } }],
+    })
+    const result = await call(box, 'memory_expand', { id: fact.id }, execFor())
+    expect(String(result)).toContain('[REDACTED]')
+    expect(String(result)).not.toContain('ghp_')
+  })
+
   it('memory_expand returns the cited excerpt by fact id', async () => {
     const { box, harness, readSessionImpl } = await toolkit()
     const fact = await harness.domain.remember(makeFact({ workspacePath: WS, sessionId: 'past-sess', seq: 42, text: 'pnpm store is local' }))

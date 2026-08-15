@@ -33,6 +33,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { basename } from 'node:path'
 
 import type { MemoryService } from './tools.ts'
+import { maskSecrets } from './redaction.ts'
 import type { PromptAssemblyContext, SystemPromptLike } from './types.ts'
 
 /** Escape a literal `<` the way the session-reference subsystem does. */
@@ -44,7 +45,10 @@ export function escapeLt(text: string): string {
 export function renderProfile(entries: readonly string[], cwd: string): string {
   if (entries.length === 0) return ''
   const label = escapeLt(basename(cwd) || cwd)
-  const lines = entries.map(entry => `- ${escapeLt(entry)}`)
+  // Secrets are masked on the injection path ALWAYS — independent of the
+  // write-side secretPolicy (a row written under 'off' or by an older
+  // version must never re-enter the model context verbatim).
+  const lines = entries.map(entry => `- ${escapeLt(maskSecrets(entry))}`)
   // Delimiter tag pair + \u003c escaping (v0.2.0 hardening, matching the
   // session-reference subsystem): persisted notes can never open or close
   // markup around them.
