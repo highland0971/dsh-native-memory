@@ -85,7 +85,9 @@ keeps it cheap.
 when `approvalWrites: true` (default). `memory_recall` / `memory_search` /
 `memory_profile` — reads, never gated. `memory_consolidate` (v0.2.0) —
 read-only near-duplicate merge suggestions plus the remaining cap budget;
-merges land through the gated edit/forget tools.
+merges land through the gated edit/forget tools. `memory_import` (v0.2.0) —
+import candidate facts from a past session's log by literal query match, one
+approval ask per fact, stored with the original `(sessionId, seq)` provenance.
 
 Tool count trades prompt cost against capability; keep the set closed until
 usage data says otherwise.
