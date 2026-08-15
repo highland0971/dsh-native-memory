@@ -428,8 +428,8 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
         name: 'memory_search',
         description:
           'Full-text search over PAST sessions of this workspace (the durable session logs), returning the strongest matching '
-          + 'event excerpt per session. Requires the full-text index enabled by this plugin\'s bundle patch. '
-          + 'Use memory_recall for the curated facts table.',
+          + 'event excerpt per session; the calling session itself is excluded. Requires the full-text index enabled by '
+          + 'this plugin\'s bundle patch. Use memory_recall for the curated facts table.',
         parameters: {
           type: 'object',
           properties: {
@@ -452,7 +452,9 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
               sessionFilters: [{ kind: 'cwd', values: [caller.cwd] }],
               limit: args.limit ?? 5,
             }, { signal: (exec as ToolExec).signal })
-            const items = page.items ?? []
+            // The calling session is live history, not a "past" session — its
+            // own tool calls would otherwise dominate the strongest matches.
+            const items = (page.items ?? []).filter(hit => hit.header.id !== caller.sessionId)
             if (items.length === 0) {
               return `no prior-session matches for ${JSON.stringify(args.query)} in this workspace`
             }

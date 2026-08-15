@@ -216,6 +216,28 @@ describe('memory tools', () => {
     )
   })
 
+  it('memory_search excludes the calling session from its results', async () => {
+    const { box, searchImpl } = await toolkit()
+    searchImpl.mockResolvedValueOnce({
+      items: [
+        { header: { id: 'sess-tool', createdAt: 2000 }, bestMatch: { snippet: 'my own search call' } },
+        { header: { id: 'past-session', createdAt: 1000 }, bestMatch: { snippet: 'we decided to use pnpm' } },
+      ],
+    })
+    const result = await call(box, 'memory_search', { query: 'pnpm' }, execFor())
+    expect(String(result)).toContain('past-session')
+    expect(String(result)).not.toContain('sess-tool')
+  })
+
+  it('memory_search says no prior-session matches when only the caller matched', async () => {
+    const { box, searchImpl } = await toolkit()
+    searchImpl.mockResolvedValueOnce({
+      items: [{ header: { id: 'sess-tool', createdAt: 2000 }, bestMatch: { snippet: 'self only' } }],
+    })
+    const result = await call(box, 'memory_search', { query: 'pnpm' }, execFor())
+    expect(String(result)).toContain('no prior-session matches')
+  })
+
   it('memory_search reports SESSION_QUERY_SEARCH_DISABLED when the backend refuses', async () => {
     const { box, searchImpl } = await toolkit()
     const disabled = new Error('search disabled')
