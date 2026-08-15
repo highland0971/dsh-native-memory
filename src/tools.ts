@@ -230,8 +230,9 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const domain = await openDomain(service)
 
           if (args.target === 'profile') {
-            const reason = writeReason('Update the workspace profile', caller.cwd, truncate(args.text, 120))
-            await approveWrite(service, exec as ToolExec, caller, 'memory_remember', reason)
+            // Pre-check the shape and caps BEFORE the approval ask (the domain
+            // putProfile stays the authoritative, race-proof gate): a doomed
+            // write must not waste a human approval.
             const profile = domain.getProfile(caller.cwd)
             const entries = [...profile.entries]
             const index = args.profile_index ?? entries.length
@@ -249,6 +250,23 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             } else {
               entries[index] = args.text
             }
+            if (entries.length > service.config.maxProfileEntries) {
+              throw new MemoryError(
+                'MEMORY_CAP_EXCEEDED',
+                `workspace profile would hold ${entries.length} entries, over the cap of ${service.config.maxProfileEntries}; `
+                + 'consolidate entries (replace with memory_remember target:"profile", or drop with empty text)',
+              )
+            }
+            for (const entry of entries) {
+              if ([...entry].length > service.config.maxProfileEntryChars) {
+                throw new MemoryError(
+                  'MEMORY_CAP_EXCEEDED',
+                  `a profile entry is ${[...entry].length} characters, over the cap of ${service.config.maxProfileEntryChars}; shorten it`,
+                )
+              }
+            }
+            const reason = writeReason('Update the workspace profile', caller.cwd, truncate(args.text, 120))
+            await approveWrite(service, exec as ToolExec, caller, 'memory_remember', reason)
             const next = await domain.putProfile({ workspacePath: caller.cwd, entries, updatedAt: Date.now() })
             return `workspace profile updated: ${next.entries.length} entries`
           }
@@ -261,6 +279,23 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             throw new MemoryError(
               'MEMORY_INVALID_ARGS',
               'memory_remember: fact text must not be empty (empty text only drops a profile entry, with target:"profile")',
+            )
+          }
+          // Pre-check caps BEFORE the approval ask; domain.remember stays the
+          // authoritative (race-proof) gate.
+          if ([...args.text].length > service.config.maxFactChars) {
+            throw new MemoryError(
+              'MEMORY_CAP_EXCEEDED',
+              `fact text is ${[...args.text].length} characters, over the cap of ${service.config.maxFactChars}; `
+              + 'split the fact or consolidate with memory_edit',
+            )
+          }
+          const active = domain.activeCount(caller.cwd) - (existing?.state === 'active' ? 1 : 0)
+          if (active >= service.config.maxFactsPerWorkspace) {
+            throw new MemoryError(
+              'MEMORY_CAP_EXCEEDED',
+              `workspace already holds ${service.config.maxFactsPerWorkspace} active facts (the cap); `
+              + 'consolidate related facts with memory_edit or forget stale ones with memory_forget first',
             )
           }
           const now = Date.now()
@@ -309,6 +344,14 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const existing = domain.getFact(caller.cwd, args.id)
           if (existing === undefined) {
             throw new MemoryError('MEMORY_NOT_FOUND', `memory_edit: no fact '${args.id}' in this workspace`)
+          }
+          // Pre-check the text cap BEFORE the approval ask (domain.remember
+          // stays the authoritative gate).
+          if (args.text !== undefined && [...args.text].length > service.config.maxFactChars) {
+            throw new MemoryError(
+              'MEMORY_CAP_EXCEEDED',
+              `fact text is ${[...args.text].length} characters, over the cap of ${service.config.maxFactChars}; shorten it`,
+            )
           }
           const next: Fact = {
             ...existing,

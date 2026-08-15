@@ -71,9 +71,9 @@ interface ToolKit {
   readonly searchImpl: ReturnType<typeof vi.fn>
 }
 
-async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean } = {}): Promise<ToolKit> {
+async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean; config?: Record<string, unknown> } = {}): Promise<ToolKit> {
   const { ctx, box } = fakeToolsCtx()
-  const harness = await bootMemory()
+  const harness = await bootMemory(options.config ?? {})
   const asks: AskRecord[] = []
   const gate: ApprovalGate = {
     request: vi.fn(async (req) => {
@@ -263,12 +263,35 @@ describe('memory tools', () => {
     expect(asks.filter(ask => ask.toolName === 'memory_remember')).toHaveLength(4)
   })
 
-  it('surfaces cap errors from the domain with their code', async () => {
-    const { box } = await toolkit()
+  it('caps are pre-checked BEFORE the approval ask — the gate is never called for doomed writes', async () => {
+    const { box, harness, asks } = await toolkit({
+      config: { maxFactsPerWorkspace: 2, maxProfileEntryChars: 10 },
+    })
+    // Oversized fact text: rejected without an approval ask.
     await expectMemoryError(
       call(box, 'memory_remember', { text: 'x'.repeat(3000) }, execFor()),
       'MEMORY_CAP_EXCEEDED',
     )
+    // Workspace at its fact cap: a NEW fact is rejected without an ask…
+    await call(box, 'memory_remember', { text: 'a' }, execFor())
+    await call(box, 'memory_remember', { text: 'b' }, execFor())
+    expect(harness.domain.activeCount(WS)).toBe(2)
+    await expectMemoryError(
+      call(box, 'memory_remember', { text: 'c' }, execFor()),
+      'MEMORY_CAP_EXCEEDED',
+    )
+    // …but an UPDATE of an existing id still works (asks once more).
+    const id = harness.domain.listActive(WS)[0]?.id as string
+    await call(box, 'memory_remember', { id, text: 'a-updated' }, execFor())
+    expect(harness.domain.getFact(WS, id)?.text).toBe('a-updated')
+    // Oversized profile entry: rejected without an ask.
+    await expectMemoryError(
+      call(box, 'memory_remember', { text: 'y'.repeat(300), target: 'profile' }, execFor()),
+      'MEMORY_CAP_EXCEEDED',
+    )
+    // Only the APPROVED writes (a, b) and the approved update asked; the
+    // three doomed writes above never reached the gate.
+    expect(asks.filter(ask => ask.toolName === 'memory_remember')).toHaveLength(3)
   })
 
   it('invalid arguments become MEMORY_INVALID_ARGS', async () => {
