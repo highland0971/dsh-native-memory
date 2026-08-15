@@ -199,19 +199,44 @@ export interface MemoryDomain {
   close(): Promise<void>
 }
 
-/** Case-fold and split a recall query into unique tokens. */
+/**
+ * Case-fold and split a recall query into unique tokens. Whitespace-separated
+ * words are further split between CJK and non-CJK runs (so mixed queries like
+ * "ci交互" yield the ASCII token "ci"), and every CJK run also contributes
+ * its overlapping bigrams — deterministic CJK n-gram recall without any
+ * semantic dependency.
+ */
 function tokenize(query: string): string[] {
-  return [...new Set(query.toLowerCase().split(/\s+/).filter(token => token.length > 0))]
+  const tokens = new Set<string>()
+  for (const word of query.toLowerCase().split(/\s+/)) {
+    const runs = word.match(/[\u3400-\u9fff]+|[^\u3400-\u9fff]+/g) ?? []
+    for (const run of runs) {
+      tokens.add(run)
+      if (/^[\u3400-\u9fff]+$/.test(run) && run.length >= 2) {
+        for (let i = 0; i < run.length - 1; i += 1) tokens.add(run.slice(i, i + 2))
+      }
+    }
+  }
+  return [...tokens].filter(token => token.length > 0)
 }
 
-/** Text matches count double, tag matches single; the union of distinct tokens. */
-function scoreFact(fact: Fact, tokens: readonly string[]): number {
+/**
+ * Three-tier deterministic scoring: exact tag match (curated routing) is the
+ * strongest signal, case-insensitive text substring next, fuzzy tag overlap
+ * last. The whole folded query as one substring gets an extra boost for
+ * MULTI-WORD phrases only, so a single-token query cannot ride its own
+ * substring twice.
+ */
+function scoreFact(fact: Fact, tokens: readonly string[], fullQuery: string, phraseBoost: boolean): number {
   const text = fact.text.toLowerCase()
+  const tags = fact.tags.map(tag => tag.toLowerCase())
   let score = 0
   for (const token of tokens) {
+    if (tags.includes(token)) score += 3
+    else if (tags.some(tag => tag.includes(token) || token.includes(tag))) score += 1
     if (text.includes(token)) score += 2
-    if (fact.tags.some(tag => tag.toLowerCase() === token)) score += 1
   }
+  if (phraseBoost && fullQuery.length > 1 && text.includes(fullQuery)) score += 4
   return score
 }
 
@@ -274,10 +299,13 @@ export async function openMemoryDomain(
     recall(workspacePath: string, query?: string, limit: number = RECALL_MAX_HITS): Fact[] {
       const bounded = Math.max(1, Math.min(50, Math.trunc(limit) || RECALL_MAX_HITS))
       const active = activeIn(workspacePath)
-      const tokens = query === undefined ? [] : tokenize(query)
+      if (query === undefined) return active.sort(compareRecency).slice(0, bounded)
+      const tokens = tokenize(query)
       if (tokens.length === 0) return active.sort(compareRecency).slice(0, bounded)
+      const folded = query.trim().toLowerCase()
+      const phraseBoost = /\s/.test(query.trim())
       return active
-        .map(fact => ({ fact, score: scoreFact(fact, tokens) }))
+        .map(fact => ({ fact, score: scoreFact(fact, tokens, folded, phraseBoost) }))
         .filter(entry => entry.score > 0)
         .sort((left, right) => right.score - left.score || compareRecency(left.fact, right.fact))
         .slice(0, bounded)
