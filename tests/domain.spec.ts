@@ -170,6 +170,16 @@ describe('memory domain over the real facility', () => {
     expect(domain.getFact(WS, active.id)?.accessCount).toBe(2)
   })
 
+  it('listAllActive spans every workspace, newest first, archived excluded', async () => {
+    const { domain } = await bootMemory()
+    const a = await domain.remember(makeFact({ workspacePath: WS, text: 'a', updatedAt: 1 }))
+    const b = await domain.remember(makeFact({ workspacePath: OTHER, text: 'b', updatedAt: 2 }))
+    const gone = await domain.remember(makeFact({ workspacePath: WS, text: 'gone', updatedAt: 3 }))
+    await domain.archive(WS, gone.id)
+    expect(domain.listAllActive().map(fact => fact.id)).toEqual([b.id, a.id])
+    expect(domain.listAllActive().every(fact => fact.id !== gone.id)).toBe(true)
+  })
+
   it('archive is a soft delete: row stays, listActive drops it, double-archive is false', async () => {
     const { domain } = await bootMemory()
     const fact = await domain.remember(makeFact({ workspacePath: WS }))

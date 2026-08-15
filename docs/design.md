@@ -84,6 +84,15 @@ keeps it cheap.
    (below).
 4. **`memory_profile`** — read the workspace profile; propose changes, then
    land them through `memory_remember` (gated).
+5. **Browser page** (v0.3.0) — a read-only `settings.section` page served by
+   the client half (`./client` export). It reads
+   `GET /dsh-native-memory/facts` from the host's optional `webServer`
+   (packages/host/webserver), listing every workspace's active facts with
+   secrets masked server-side. The page never writes: the approval service
+   refuses requests outside an open turn (packages/interaction/user-approval
+   src/index.ts:261) and a web request carries no agent, so deletions stay in
+   the chat — the page copies a `memory_forget id: "…"` instruction and the
+   tool's own approval gate does the human check.
 
 ## 5. Tools
 

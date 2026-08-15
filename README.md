@@ -54,6 +54,10 @@ Writes reject secret-shaped text (tokens / keys / passwords) by default;
 credential-assignment detector can flag benign `token: …` values of ≥16
 characters. Prompt injection and tool output always mask secrets.
 
+A read-only browser page (settings → 记忆) lists every workspace's facts with
+secrets masked; deletions are copied as a `memory_forget` instruction and land
+in the chat through the approval gate.
+
 ## Development
 
 ```sh
