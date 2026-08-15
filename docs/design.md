@@ -66,7 +66,10 @@ keeps it cheap.
    Renders only the caller session's workspace profile, framed as untrusted
    persisted notes. ~600 tokens worst case, typically far less.
 2. **`memory_recall`** — read-only scan over active facts of the caller's
-   workspace (text first, tags second, recency tiebreak).
+   workspace. Deterministic three-tier keyword scoring (v0.2.0): exact tag
+   match > case-insensitive text substring (CJK bigram tokenization, whole-
+   query boost) > fuzzy tag overlap; recency tiebreak. Literal, not semantic
+   — cross-language queries need the query language to match the fact's.
 3. **`memory_search`** — FTS over past sessions via
    `ctx.sessionQuery.searchSessions` with an exact-cwd session filter (the
    same API and authorization rule dsh-tool-session-query's `session_search`

@@ -87,10 +87,9 @@ describe('memory domain over the real facility', () => {
     expect(domain.activeCount(OTHER)).toBe(1)
   })
 
-  it('recall ranks text matches first, tags second, recency tiebreak; empty query lists newest', async () => {
+  it('recall ranks exact tags first, text substrings next, recency tiebreak; empty query lists newest', async () => {
     const { domain } = await bootMemory()
     const now = Date.now()
-    // Text match on "ci" but old; tag-only match newer; exact text match newest.
     await domain.remember(makeFact({ workspacePath: WS, text: 'the ci pipeline is slow', updatedAt: now - 3000 }))
     await domain.remember(makeFact({ workspacePath: WS, text: 'unrelated note', tags: ['ci'], updatedAt: now - 2000 }))
     await domain.remember(makeFact({ workspacePath: WS, text: 'ci uses pnpm', updatedAt: now - 1000 }))
@@ -98,9 +97,9 @@ describe('memory domain over the real facility', () => {
 
     const ranked = domain.recall(WS, 'ci')
     expect(ranked.map(fact => fact.text)).toEqual([
-      'ci uses pnpm',          // 1 text token ×2, newest
-      'the ci pipeline is slow', // 1 text token ×2, older
-      'unrelated note',        // tag-only ×1
+      'unrelated note',        // exact tag ×3 (curated routing wins)
+      'ci uses pnpm',          // text substring ×2, newest
+      'the ci pipeline is slow', // text substring ×2, older
     ])
 
     // Deterministic: same input, same order.
@@ -110,6 +109,25 @@ describe('memory domain over the real facility', () => {
     const all = domain.recall(WS)
     expect(all[0]?.text).toBe('no match here')
     expect(all).toHaveLength(4)
+  })
+
+  it('recall is case-insensitive and boosts the whole query as one substring', async () => {
+    const { domain } = await bootMemory()
+    await domain.remember(makeFact({ workspacePath: WS, text: 'the Release Verification runs from the web session' }))
+    await domain.remember(makeFact({ workspacePath: WS, text: 'release and verification are separate words here' }))
+    const ranked = domain.recall(WS, 'release verification')
+    // Whole-phrase substring (×4 + token hits) beats scattered token hits.
+    expect(ranked[0]?.text).toContain('runs from the web session')
+  })
+
+  it('recall tokenizes CJK runs into whole runs plus bigrams, and splits mixed runs', async () => {
+    const { domain } = await bootMemory()
+    await domain.remember(makeFact({ workspacePath: WS, text: '交互验证约定:发布验证走 web 会话人工审批' }))
+    await domain.remember(makeFact({ workspacePath: WS, text: 'ci 管道使用 pnpm', tags: ['ci'] }))
+    // Bigram "验证" from the query run "交互验证" matches the CJK fact.
+    expect(domain.recall(WS, '交互验证')[0]?.text).toContain('发布验证走')
+    // The ASCII run "ci" extracted from a mixed word matches the tag.
+    expect(domain.recall(WS, 'ci交互')[0]?.text).toContain('pnpm')
   })
 
   it('archive is a soft delete: row stays, listActive drops it, double-archive is false', async () => {

@@ -192,7 +192,8 @@ describe('memory tools', () => {
     const text = String(result)
     expect(text).toContain('the ci pipeline')
     expect(text).toContain('unrelated')
-    expect(text.indexOf('the ci pipeline')).toBeLessThan(text.indexOf('unrelated'))
+    // Exact tag match (curated routing) outranks a text substring.
+    expect(text.indexOf('unrelated')).toBeLessThan(text.indexOf('the ci pipeline'))
   })
 
   it('memory_search renders FTS hits and is workspace-filtered', async () => {
