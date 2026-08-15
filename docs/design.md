@@ -88,6 +88,9 @@ read-only near-duplicate merge suggestions plus the remaining cap budget;
 merges land through the gated edit/forget tools. `memory_import` (v0.2.0) —
 import candidate facts from a past session's log by literal query match, one
 approval ask per fact, stored with the original `(sessionId, seq)` provenance.
+`memory_expand` (v0.3.0) — read-only: expand one fact's citation (or an
+explicit session_id + seq) back to the original session-log excerpt around
+the cited event, exact-cwd authorized, zero LLM.
 
 Tool count trades prompt cost against capability; keep the set closed until
 usage data says otherwise.
