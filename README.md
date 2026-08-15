@@ -45,6 +45,7 @@ the memory tools to every session. Details and configuration:
 | `memory_consolidate` | near-duplicate merge suggestions + cap budget | none |
 | `memory_import` | import candidate facts from a past session's log | approval (per fact) |
 | `memory_profile` | read the always-injected workspace profile | none |
+| `memory_export` | write a git-friendly Markdown mirror (`.dsh-memory/memory.md`, masked, idempotent) | none |
 
 Every fact records its origin `(sessionId, seq)` — memory stays
 reconstructable from the lossless session log.

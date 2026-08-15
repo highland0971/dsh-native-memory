@@ -74,7 +74,7 @@ describe('plugin entry', () => {
   it('stays mounted without a storageDomain and memory tools answer MEMORY_DISABLED', () => {
     const { ctx, defs } = fakeCtx()
     apply(ctx, {})
-    expect(defs.size).toBe(9)
+    expect(defs.size).toBe(10)
     return expect(defs.get('memory_remember')!.execute({ text: 'x' }, exec('/ws')))
       .rejects.toMatchObject({ name: 'MemoryError', code: 'MEMORY_DISABLED' })
   })
@@ -163,7 +163,7 @@ describe('plugin entry', () => {
     apply(fake, { approvalWrites: false })
 
     await defs.get('memory_remember')!.execute({ text: 'persisted' }, exec('/ws'))
-    expect(defs.size).toBe(9)
+    expect(defs.size).toBe(10)
     expect(sections).toHaveLength(1)
     await outerTeardown?.()
     expect(defs.size).toBe(0)

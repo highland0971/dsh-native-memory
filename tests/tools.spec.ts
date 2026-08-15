@@ -1,4 +1,4 @@
-// Tool surface tests: the nine tools register into ctx.tools; write tools
+// Tool surface tests: the ten tools register into ctx.tools; write tools
 // route through the approval gate (mocked) and fail closed; read tools never
 // ask; caller workspace authorization enforced via exec.agent.session.header.cwd.
 //
@@ -116,12 +116,13 @@ function expectMemoryError(promise: Promise<unknown>, code: string) {
 }
 
 describe('memory tools', () => {
-  it('registers all nine tools with their names', async () => {
+  it('registers all ten tools with their names', async () => {
     const { box } = await toolkit()
     expect([...box.defs.keys()].sort()).toEqual([
       'memory_consolidate',
       'memory_edit',
       'memory_expand',
+      'memory_export',
       'memory_forget',
       'memory_import',
       'memory_profile',
@@ -417,7 +418,7 @@ describe('memory tools', () => {
       approvalGate: { request: async () => true },
       sessionQuery: undefined,
     })
-    expect(box.defs.size).toBe(9)
+    expect(box.defs.size).toBe(10)
     disposer()
     expect(box.defs.size).toBe(0)
     expect(box.disposeCalls).toBe(1)
