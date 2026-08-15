@@ -49,6 +49,9 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 浏览器只读页面（设置 → 记忆）列出所有工作区的事实（密钥已打码）；删除会复制为一条
 `memory_forget` 指令，在对话中经审批门执行。
 
+可选会话末提议（`proposeOnSessionEnd: true`）：一次廉价 LLM 调用把结束的会话蒸馏为候选事实，
+在后续会话中展示；只有经审批门 `memory_remember` 才会成为事实。
+
 ## 开发
 
 ```sh

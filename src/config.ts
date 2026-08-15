@@ -31,6 +31,23 @@ export const Config = z.object({
    * as-is. Prompt injection and tool echo are ALWAYS masked regardless.
    */
   secretPolicy: z.enum(['reject', 'mask', 'off']).default('reject'),
+  /**
+   * Session-end memory proposal (v0.3.0, OFF by default): when enabled, a
+   * finished session is distilled once with a cheap LLM call into candidate
+   * facts. Candidates are PROPOSALS only — they are shown in the next
+   * sessions' prompt and become facts only through the approval-gated
+   * memory_remember. Writes stay半自动: the LLM proposes, the human approves.
+   */
+  proposeOnSessionEnd: z.boolean().default(false),
+  /** LLM route for the distillation call. */
+  proposalProvider: z.string().min(1).default('deepseek'),
+  proposalModel: z.string().min(1).default('deepseek-v4-flash'),
+  /** Upper bound on candidate facts per distillation. */
+  proposalMaxFacts: z.number().int().min(1).max(20).default(8),
+  /** Upper bound on pending proposals per workspace (oldest expire first). */
+  proposalMaxPending: z.number().int().min(1).max(64).default(16),
+  /** Pending proposals older than this many days are dropped from display. */
+  proposalTtlDays: z.number().int().min(1).max(365).default(7),
 })
 
 export type ConfigType = z.infer<typeof Config>

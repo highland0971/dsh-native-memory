@@ -263,7 +263,7 @@ export function extractCandidateSentences(text: string, query: string): string[]
 }
 
 /** Concatenated text of one durable log event (both known data shapes). */
-function eventText(event: SessionEventLike): string {
+export function eventText(event: SessionEventLike): string {
   const blocks = event.data?.message?.content ?? event.data?.content ?? []
   return blocks
     .filter(block => block.type === 'text' && block.text !== undefined)
@@ -393,6 +393,9 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const reason = writeReason(`Store ${fact.kind} fact`, caller.cwd, truncate(fact.text, 120))
           await approveWrite(service, exec as ToolExec, caller, 'memory_remember', reason)
           const stored = await domain.remember(fact)
+          // A stored fact consumes any pending proposal with the same text
+          // (the proposal's job — prompting this very call — is done).
+          await domain.consumeProposal(caller.cwd, stored.text).catch(() => {})
           return `stored fact ${stored.id} [${stored.kind}] — cited to session ${stored.sessionId}#${stored.seq}`
         },
       }),

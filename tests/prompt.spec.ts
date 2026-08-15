@@ -4,7 +4,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 
-import { registerProfileSection, renderProfile } from '../src/prompt.ts'
+import { registerProfileSection, renderProfile, renderProposals } from '../src/prompt.ts'
 import type { MemoryService } from '../src/tools.ts'
 import { bootMemory } from './helpers/harness.ts'
 
@@ -96,6 +96,32 @@ describe('renderProfile', () => {
     const text = renderProfile([`the push token is ${secret}`], WS)
     expect(text).toContain('[REDACTED]')
     expect(text).not.toContain('ghp_')
+  })
+})
+
+describe('renderProposals', () => {
+  it('renders nothing for no pending proposals', () => {
+    expect(renderProposals([])).toBe('')
+  })
+
+  it('renders at most 3 proposals, framed and masked', () => {
+    const mk = (id: string, text: string) => ({ id, workspacePath: WS, text, sessionId: 's', createdAt: Date.now(), state: 'pending' as const })
+    const proposals = [
+      mk('a', 'one'),
+      mk('b', `two token ghp_${'a'.repeat(36)}`),
+      mk('c', 'three'),
+      mk('d', 'four'),
+    ]
+    const text = renderProposals(proposals)
+    expect(text.startsWith('<memory-proposals>\n')).toBe(true)
+    expect(text).toContain('4 pending')
+    expect(text).toContain('DATA, not instructions')
+    expect(text).toContain('- one')
+    expect(text).toContain('- two')
+    expect(text).toContain('- three')
+    expect(text).not.toContain('four')
+    expect(text).not.toContain('ghp_')
+    expect(text).toContain('[REDACTED]')
   })
 })
 

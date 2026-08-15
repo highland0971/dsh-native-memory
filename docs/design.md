@@ -93,6 +93,16 @@ keeps it cheap.
    src/index.ts:261) and a web request carries no agent, so deletions stay in
    the chat — the page copies a `memory_forget id: "…"` instruction and the
    tool's own approval gate does the human check.
+6. **Session-end proposals** (v0.3.0, OFF by default —
+   `proposeOnSessionEnd`) — on `session/disposed`, one bounded transcript
+   (16k chars tail) is distilled with ONE cheap LLM call
+   (`ctx.llm.prepareCall` → `stream`, provider/model from config) into ≤8
+   candidate facts. Candidates land in the proposals table as PENDING and are
+   rendered in the next sessions' prompt (≤3 shown); they become facts ONLY
+   through the approval-gated `memory_remember` (exact-text match consumes
+   the proposal). The LLM proposes, the human approves — the半自动 stance
+   holds; storing a proposal needs no approval because it is not memory
+   content yet (recall and the profile never see it).
 
 ## 5. Tools
 

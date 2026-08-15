@@ -21,6 +21,7 @@ import { openMemoryDomain } from './domain.ts'
 import type { MemoryDomain, StorageDomainFacility } from './domain.ts'
 import { MemoryError } from './errors.ts'
 import { registerProfileSection } from './prompt.ts'
+import { registerSessionEndProposal } from './propose.ts'
 import { registerMemoryTools } from './tools.ts'
 import type { MemoryService } from './tools.ts'
 import type { SessionQueryServiceLike } from './types.ts'
@@ -77,10 +78,12 @@ export function apply(ctx: Context, config: unknown) {
     const disposeTools = registerMemoryTools(ctx, service)
     const disposeProfile = resolved.injectProfile ? registerProfileSection(ctx, service) : undefined
     const disposeWeb = registerFactsRoute(ctx, service)
+    const disposeProposal = registerSessionEndProposal(ctx, service)
     return async () => {
       disposeTools()
       disposeProfile?.()
       disposeWeb?.()
+      disposeProposal?.()
       // Close the domain if it ever opened: writes drain, the unit releases,
       // and the domain name frees up for a later open.
       if (domainPromise !== undefined) {

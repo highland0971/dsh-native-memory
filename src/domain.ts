@@ -77,6 +77,29 @@ export const ProfileSchema = z.object({
 
 export type Profile = z.infer<typeof ProfileSchema>
 
+/**
+ * One LLM-distilled memory proposal from a finished session (v0.3.0,
+ * opt-in). Pending proposals are shown in the next sessions' prompt; they
+ * become facts only through memory_remember, whose approval gate does the
+ * human check. Consumed on exact normalized-text match after a successful
+ * remember; expired by TTL.
+ */
+export const ProposalSchema = z.object({
+  /** Stable id; the table key. */
+  id: z.string().min(1),
+  /** Workspace the proposal targets (the disposed session's cwd). */
+  workspacePath: z.string().min(1),
+  /** Proposed fact text (secrets already masked by the distiller). */
+  text: z.string().min(1),
+  /** Provenance: the session the proposal was distilled from. */
+  sessionId: z.string().min(1),
+  /** Epoch millis. */
+  createdAt: z.number().int().nonnegative(),
+  state: z.enum(['pending', 'consumed', 'expired']).default('pending'),
+})
+
+export type Proposal = z.infer<typeof ProposalSchema>
+
 // ---------------------------------------------------------------------------
 // Domain spec (structural, self-contained).
 
@@ -175,6 +198,7 @@ export const memoryDomainSpec = defineMemoryDomain({
   tables: {
     facts: domainTable(FactSchema),
     profiles: domainTable(ProfileSchema),
+    proposals: domainTable(ProposalSchema),
   },
 })
 
@@ -211,6 +235,12 @@ export interface MemoryDomain {
   getProfile(workspacePath: string): Profile
   /** Persist one workspace profile; enforces entry caps. */
   putProfile(profile: Profile): Promise<Profile>
+  /** Add one distilled proposal; expires stale pendings and enforces the pending cap. */
+  addProposal(proposal: Proposal): Promise<void>
+  /** Pending (unexpired) proposals of one workspace, oldest first. */
+  pendingProposals(workspacePath: string): Proposal[]
+  /** Mark pending proposals with equal normalized text as consumed. */
+  consumeProposal(workspacePath: string, text: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -361,6 +391,7 @@ export async function openMemoryDomain(
   const opened = await facility.open(memoryDomainSpec)
   const facts = opened.table('facts') as unknown as KvTable<Fact>
   const profiles = opened.table('profiles') as unknown as KvTable<Profile>
+  const proposals = opened.table('proposals') as unknown as KvTable<Proposal>
 
   const scopedFact = (workspacePath: string, fact: Fact): Fact | undefined =>
     fact.workspacePath === workspacePath ? fact : undefined
@@ -485,6 +516,48 @@ export async function openMemoryDomain(
       const next: Profile = { workspacePath: profile.workspacePath, entries, updatedAt: Date.now() }
       await profiles.put(profile.workspacePath, next)
       return next
+    },
+
+    async addProposal(proposal: Proposal): Promise<void> {
+      const now = Date.now()
+      const ttl = config.proposalTtlDays * 86_400_000
+      const pending = [...proposals.entries()]
+        .map(([, item]) => item)
+        .filter(item => item.state === 'pending')
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+      for (const stale of pending.filter(item => now - item.createdAt > ttl)) {
+        await proposals.put(stale.id, { ...stale, state: 'expired' })
+      }
+      const live = pending.filter(item => now - item.createdAt <= ttl)
+      // The cap applies AFTER the new proposal lands: keep maxPending - 1
+      // of the existing pendings (oldest expire first).
+      const overflow = live.length + 1 - config.proposalMaxPending
+      for (const oldest of live.slice(0, Math.max(0, overflow))) {
+        await proposals.put(oldest.id, { ...oldest, state: 'expired' })
+      }
+      await proposals.put(proposal.id, proposal)
+    },
+
+    pendingProposals(workspacePath: string): Proposal[] {
+      const now = Date.now()
+      const ttl = config.proposalTtlDays * 86_400_000
+      return [...proposals.entries()]
+        .map(([, proposal]) => proposal)
+        .filter(proposal =>
+          proposal.workspacePath === workspacePath
+          && proposal.state === 'pending'
+          && now - proposal.createdAt <= ttl)
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    },
+
+    async consumeProposal(workspacePath: string, text: string): Promise<void> {
+      const normalized = text.trim().replace(/\s+/g, ' ')
+      for (const [, proposal] of proposals.entries()) {
+        if (proposal.workspacePath !== workspacePath || proposal.state !== 'pending') continue
+        if (proposal.text.trim().replace(/\s+/g, ' ') === normalized) {
+          await proposals.put(proposal.id, { ...proposal, state: 'consumed' })
+        }
+      }
     },
 
     close(): Promise<void> {
