@@ -39,7 +39,7 @@ the memory tools to every session. Details and configuration:
 | `memory_remember` | add/update a fact in this workspace | approval |
 | `memory_edit` | replace a fact | approval |
 | `memory_forget` | archive a fact (soft delete) | approval |
-| `memory_recall` | deterministic three-tier keyword scan (tags > text > fuzzy) | none |
+| `memory_recall` | deterministic three-tier keyword scan (tags > text > fuzzy; freshness/access tie-breaks) | none |
 | `memory_search` | FTS over this workspace's past sessions (caller excluded) | none |
 | `memory_expand` | expand a fact's citation to the original log excerpt | none |
 | `memory_consolidate` | near-duplicate merge suggestions + cap budget | none |

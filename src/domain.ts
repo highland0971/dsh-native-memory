@@ -54,6 +54,14 @@ export const FactSchema = z.object({
   /** Epoch millis. */
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
+  /**
+   * Recall-ordering metadata (added v0.3.0, optional for backward
+   * compatibility with rows written before it): how often memory_recall has
+   * returned this fact, and when last. Bumped by the tool layer after a
+   * recall — content fields stay untouched, so no approval is involved.
+   */
+  accessCount: z.number().int().nonnegative().optional(),
+  lastAccessedAt: z.number().int().nonnegative().optional(),
   /** Soft-delete: `forget` sets state to archived; recall ignores it. */
   state: z.enum(['active', 'archived']).default('active'),
 })
@@ -188,6 +196,11 @@ export interface MemoryDomain {
    * tiebreak. An empty query lists the newest active facts.
    */
   recall(workspacePath: string, query?: string, limit?: number): Fact[]
+  /**
+   * Bump the recall-access counters of the given active facts (metadata-only
+   * write, no approval, no cap movement).
+   */
+  touchFacts(workspacePath: string, ids: readonly string[]): Promise<void>
   /** Soft-delete one workspace-scoped fact. Returns false when absent/foreign/archived. */
   archive(workspacePath: string, id: string): Promise<boolean>
   /** Active facts in one workspace (cap accounting). */
@@ -316,6 +329,28 @@ function compareRecency(left: Fact, right: Fact): number {
   return right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)
 }
 
+/**
+ * Freshness of one fact by its updatedAt age, in three states (forge-style):
+ * fresh ≤ recallFreshWindowDays, current ≤ recallStaleWindowDays, stale beyond.
+ */
+function freshnessWeight(fact: Fact, now: number, config: ConfigType): number {
+  const ageDays = (now - fact.updatedAt) / 86_400_000
+  if (ageDays <= config.recallFreshWindowDays) return 1
+  if (ageDays <= config.recallStaleWindowDays) return 0.8
+  return 0.5
+}
+
+/**
+ * Within-tier recall signals: freshness (0.5–1.0) and access frequency
+ * (0–10 counts, normalized). Each signal contributes at most 0.4 to the total,
+ * so the sum is always < 1 — a lower text tier can never outrank a higher one
+ * (tag-exact stays above substring stays above fuzzy, per the acceptance).
+ */
+function recallSignals(fact: Fact, now: number, config: ConfigType): number {
+  const access = Math.min(1, (fact.accessCount ?? 0) / 10)
+  return 0.4 * freshnessWeight(fact, now, config) + 0.4 * access
+}
+
 /** Open the memory domain over a facility and return the typed handle. */
 export async function openMemoryDomain(
   facility: StorageDomainFacility,
@@ -375,12 +410,34 @@ export async function openMemoryDomain(
       if (tokens.length === 0) return active.sort(compareRecency).slice(0, bounded)
       const folded = query.trim().toLowerCase()
       const phraseBoost = /\s/.test(query.trim())
+      const now = Date.now()
       return active
-        .map(fact => ({ fact, score: scoreFact(fact, tokens, folded, phraseBoost) }))
-        .filter(entry => entry.score > 0)
+        .map(fact => ({ fact, tier: scoreFact(fact, tokens, folded, phraseBoost) }))
+        .filter(entry => entry.tier > 0)
+        .map(entry => ({ fact: entry.fact, score: entry.tier + recallSignals(entry.fact, now, config) }))
         .sort((left, right) => right.score - left.score || compareRecency(left.fact, right.fact))
         .slice(0, bounded)
         .map(entry => entry.fact)
+    },
+
+    /**
+     * Bump the recall-access counters of the given active facts (metadata-only
+     * write: text/kind/tags/state/provenance stay untouched, so it needs no
+     * approval and does not move cap accounting). Missing, foreign, or
+     * archived ids are skipped.
+     */
+    async touchFacts(workspacePath: string, ids: readonly string[]): Promise<void> {
+      const now = Date.now()
+      await Promise.all(ids.map(async (id) => {
+        const stored = facts.get(id)
+        const fact = stored === undefined ? undefined : scopedFact(workspacePath, stored)
+        if (fact === undefined || fact.state !== 'active') return
+        await facts.put(fact.id, {
+          ...fact,
+          accessCount: (fact.accessCount ?? 0) + 1,
+          lastAccessedAt: now,
+        })
+      }))
     },
 
     async archive(workspacePath: string, id: string): Promise<boolean> {

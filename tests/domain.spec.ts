@@ -130,6 +130,46 @@ describe('memory domain over the real facility', () => {
     expect(domain.recall(WS, 'ci交互')[0]?.text).toContain('pnpm')
   })
 
+  it('recall ranks within a tier by freshness, but never across tiers', async () => {
+    const { domain } = await bootMemory()
+    const now = Date.now()
+    const day = 86_400_000
+    // Both match the query textually (×2); one is stale (91 days), one fresh.
+    await domain.remember(makeFact({ workspacePath: WS, text: 'ci stale note', updatedAt: now - 91 * day }))
+    await domain.remember(makeFact({ workspacePath: WS, text: 'ci fresh note', updatedAt: now - day }))
+    const ranked = domain.recall(WS, 'ci')
+    expect(ranked.map(fact => fact.text)).toEqual(['ci fresh note', 'ci stale note'])
+
+    // A stale tag-exact fact still outranks a fresh substring fact: the text tier dominates.
+    const staleTag = await domain.remember(makeFact({ workspacePath: WS, text: 'unrelated', tags: ['ci'], updatedAt: now - 200 * day }))
+    const ranked2 = domain.recall(WS, 'ci')
+    expect(ranked2[0]?.id).toBe(staleTag.id)
+  })
+
+  it('recall breaks tier-internal ties by access frequency, then recency', async () => {
+    const { domain } = await bootMemory()
+    const now = Date.now()
+    await domain.remember(makeFact({ workspacePath: WS, text: 'ci accessed often', updatedAt: now - 1000, accessCount: 5 }))
+    await domain.remember(makeFact({ workspacePath: WS, text: 'ci never accessed', updatedAt: now - 1000, accessCount: 0 }))
+    const ranked = domain.recall(WS, 'ci')
+    expect(ranked.map(fact => fact.text)).toEqual(['ci accessed often', 'ci never accessed'])
+  })
+
+  it('touchFacts bumps access counters only for active, workspace-scoped facts', async () => {
+    const { domain } = await bootMemory()
+    const active = await domain.remember(makeFact({ workspacePath: WS, text: 'a' }))
+    const archived = await domain.remember(makeFact({ workspacePath: WS, text: 'b' }))
+    const foreign = await domain.remember(makeFact({ workspacePath: OTHER, text: 'c' }))
+    await domain.archive(WS, archived.id)
+    await domain.touchFacts(WS, [active.id, archived.id, foreign.id, 'missing'])
+    expect(domain.getFact(WS, active.id)?.accessCount).toBe(1)
+    expect(domain.getFact(WS, archived.id)?.accessCount).toBe(undefined)
+    expect(domain.getFact(WS, archived.id)?.state).toBe('archived')
+    expect(domain.getFact(OTHER, foreign.id)?.accessCount).toBe(undefined)
+    await domain.touchFacts(WS, [active.id])
+    expect(domain.getFact(WS, active.id)?.accessCount).toBe(2)
+  })
+
   it('archive is a soft delete: row stays, listActive drops it, double-archive is false', async () => {
     const { domain } = await bootMemory()
     const fact = await domain.remember(makeFact({ workspacePath: WS }))

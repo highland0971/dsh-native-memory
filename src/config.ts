@@ -18,6 +18,13 @@ export const Config = z.object({
   maxProfileEntryChars: z.number().int().min(1).max(100_000).default(240),
   /** Route every write action through the host approval stack. */
   approvalWrites: z.boolean().default(true),
+  /**
+   * Recall freshness windows (days since updatedAt): ≤ fresh = weight 1.0,
+   * ≤ stale = 0.8, older = 0.5. Acts WITHIN a recall tier only — the three-tier
+   * text ranking always dominates (tag > substring > fuzzy).
+   */
+  recallFreshWindowDays: z.number().int().min(0).default(7),
+  recallStaleWindowDays: z.number().int().min(0).default(90),
 })
 
 export type ConfigType = z.infer<typeof Config>
