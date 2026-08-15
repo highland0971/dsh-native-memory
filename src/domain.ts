@@ -100,6 +100,32 @@ export const ProposalSchema = z.object({
 
 export type Proposal = z.infer<typeof ProposalSchema>
 
+/**
+ * One compaction drift alarm (v0.3.0): anchors the summary dropped from the
+ * shadowed turns. Rendered in the next sessions' prompt as DATA to verify;
+ * expires by TTL. Not memory content — read-only surface, no approval.
+ */
+export const AlarmSchema = z.object({
+  /** Stable id; the table key. */
+  id: z.string().min(1),
+  /** Workspace the alarm belongs to (the compacted session's cwd). */
+  workspacePath: z.string().min(1),
+  /** The session whose compaction dropped the anchors. */
+  sessionId: z.string().min(1),
+  /** Literal anchors that vanished from the summary (≤5, longest first). */
+  vanishedAnchors: z.array(z.string()).max(5),
+  /** The shadowed seq range, when the summary event carried it. */
+  shadowedRange: z.object({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().nonnegative(),
+  }).optional(),
+  /** Epoch millis. */
+  createdAt: z.number().int().nonnegative(),
+  state: z.enum(['active', 'expired']).default('active'),
+})
+
+export type Alarm = z.infer<typeof AlarmSchema>
+
 // ---------------------------------------------------------------------------
 // Domain spec (structural, self-contained).
 
@@ -199,6 +225,7 @@ export const memoryDomainSpec = defineMemoryDomain({
     facts: domainTable(FactSchema),
     profiles: domainTable(ProfileSchema),
     proposals: domainTable(ProposalSchema),
+    alarms: domainTable(AlarmSchema),
   },
 })
 
@@ -241,6 +268,10 @@ export interface MemoryDomain {
   pendingProposals(workspacePath: string): Proposal[]
   /** Mark pending proposals with equal normalized text as consumed. */
   consumeProposal(workspacePath: string, text: string): Promise<void>
+  /** Add one drift alarm; expires stale alarms and enforces the active cap. */
+  addAlarm(alarm: Alarm): Promise<void>
+  /** Active (unexpired) alarms of one workspace, newest first. */
+  activeAlarms(workspacePath: string): Alarm[]
   close(): Promise<void>
 }
 
@@ -392,6 +423,7 @@ export async function openMemoryDomain(
   const facts = opened.table('facts') as unknown as KvTable<Fact>
   const profiles = opened.table('profiles') as unknown as KvTable<Profile>
   const proposals = opened.table('proposals') as unknown as KvTable<Proposal>
+  const alarms = opened.table('alarms') as unknown as KvTable<Alarm>
 
   const scopedFact = (workspacePath: string, fact: Fact): Fact | undefined =>
     fact.workspacePath === workspacePath ? fact : undefined
@@ -558,6 +590,36 @@ export async function openMemoryDomain(
           await proposals.put(proposal.id, { ...proposal, state: 'consumed' })
         }
       }
+    },
+
+    async addAlarm(alarm: Alarm): Promise<void> {
+      const now = Date.now()
+      const ttl = config.guardAlarmTtlHours * 3_600_000
+      const active = [...alarms.entries()]
+        .map(([, item]) => item)
+        .filter(item => item.state === 'active')
+        .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+      for (const stale of active.filter(item => now - item.createdAt > ttl)) {
+        await alarms.put(stale.id, { ...stale, state: 'expired' })
+      }
+      const live = active.filter(item => now - item.createdAt <= ttl)
+      const overflow = live.length + 1 - config.guardAlarmMax
+      for (const oldest of live.slice(0, Math.max(0, overflow))) {
+        await alarms.put(oldest.id, { ...oldest, state: 'expired' })
+      }
+      await alarms.put(alarm.id, alarm)
+    },
+
+    activeAlarms(workspacePath: string): Alarm[] {
+      const now = Date.now()
+      const ttl = config.guardAlarmTtlHours * 3_600_000
+      return [...alarms.entries()]
+        .map(([, alarm]) => alarm)
+        .filter(alarm =>
+          alarm.workspacePath === workspacePath
+          && alarm.state === 'active'
+          && now - alarm.createdAt <= ttl)
+        .sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))
     },
 
     close(): Promise<void> {

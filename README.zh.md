@@ -52,6 +52,9 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 可选会话末提议（`proposeOnSessionEnd: true`）：一次廉价 LLM 调用把结束的会话蒸馏为候选事实，
 在后续会话中展示；只有经审批门 `memory_remember` 才会成为事实。
 
+压缩漂移护栏（`compactionGuard: true`，默认开启）：压缩摘要丢掉的字面锚点会在后续会话中
+作为待核实数据浮现——确定性、零 LLM。
+
 ## 开发
 
 ```sh

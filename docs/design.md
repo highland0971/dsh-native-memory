@@ -103,6 +103,14 @@ keeps it cheap.
    the proposal). The LLM proposes, the human approves — the半自动 stance
    holds; storing a proposal needs no approval because it is not memory
    content yet (recall and the profile never see it).
+7. **Compaction drift guard** (v0.3.0, ON by default — `compactionGuard`) —
+   on `session/event` for `compaction/summary` events
+   (packages/compaction/compaction-basic/src/region.ts:442+), re-derive the
+   shadowed turns' text by seq, extract deterministic literal anchors
+   (quoted literals, path-like runs, key=value pairs, error tokens), and
+   record the ones the summary dropped as bounded alarms (≤5 anchors, ≤3
+   alarms, 24h TTL). Rendered in the next sessions' prompt as DATA to
+   verify — deterministic, zero LLM, zero extra model call.
 
 ## 5. Tools
 
