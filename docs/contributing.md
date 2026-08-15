@@ -6,9 +6,12 @@ For this project that means:
 
 1. **Workflow (mandatory since v0.2.0)**: every change starts as a GitHub
    issue on the current milestone; one issue = one branch = one PR, squash
-   merged into `main`. See `AGENTS.md` in the repo root for the full
-   convention, including the DSH-sandbox specifics (credentials, retries,
-   Contents-API fallback).
+   merged into `main`. **Every PR passes two gates before merging**: an
+   independent subagent review (fresh context, template in
+   `docs/review-prompt.md`, verdict APPROVE/REQUEST_CHANGES) and a green CI —
+   a failed review sends the branch back for fixes and re-review. See
+   `AGENTS.md` in the repo root for the full convention, including the
+   DSH-sandbox specifics (credentials, retries, Contents-API fallback).
 2. **Code contributions**: PRs to this repository. Keep the architecture
    contract in `docs/design.md` truthful: any API dependency must cite its
    `file:line` in a tested deepseek-harness revision.

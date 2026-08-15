@@ -21,8 +21,18 @@ git commit -m "feat/fix(scope): … (Closes #N)"
 git push -u origin issue-N-slug          # 推送(见 §4 凭据)
 # 然后开 PR:POST /repos/highland0971/dsh-native-memory/pulls
 #   {"title": "...", "head": "issue-N-slug", "base": "main", "body": "Closes #N"}
-# CI 绿后 squash 合入(API:PATCH pulls/<n> {"merge_method":"squash"})
 ```
+
+**强制审查门(2026-08-15 起)**:每个 PR 在合入前必须经过两道门,缺一不可:
+
+1. **独立子代理审查** — 派一个全新上下文的 subagent(不得 fork 复用本会话
+   记忆),按 `docs/review-prompt.md` 模板审查该 PR:对照真实 harness API
+   契约(`/opt/dsh-src` 内 file:line)、跑 `pnpm typecheck && pnpm lint && pnpm test`
+   (本地 store)、检查授权/审批/安全逻辑未被削弱,输出
+   `APPROVE` 或 `REQUEST_CHANGES`。REQUEST_CHANGES → 同分支修复后**重新审查**,
+   不得合入。审查是提交者之外的第二人意见 — 提交者的自述不可替代。
+2. **CI 绿** — 与审查并行等待;两门全过才 squash 合入:
+   `PATCH /repos/…/pulls/<n>/merge {"merge_method":"squash"}`。
 
 ## 3. 环境事实(本机 DSH 沙箱)
 
