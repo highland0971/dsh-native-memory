@@ -95,7 +95,8 @@ export interface SessionEventLike {
 
 /** `ctx.sessionQuery.readSession` result (structural view). */
 export interface SessionLogSnapshotLike {
-  readonly header: { readonly id: string; readonly cwd?: string }
+  /** The real readSession returns the header under `session` (session-query src/index.ts). */
+  readonly session: { readonly id: string; readonly cwd?: string }
   readonly events: readonly SessionEventLike[]
 }
 

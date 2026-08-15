@@ -349,7 +349,7 @@ describe('memory tools', () => {
   it('memory_import asks per candidate and stores facts with the source session provenance', async () => {
     const { box, harness, asks, readSessionImpl } = await toolkit()
     readSessionImpl.mockResolvedValueOnce({
-      header: { id: 'past-sess', cwd: WS },
+      session: { id: 'past-sess', cwd: WS },
       events: [
         { type: 'user/message', seq: 10, data: { message: { content: [{ type: 'text', text: 'we decided to use pnpm. later we used npm.' }] } } },
         { type: 'assistant/message', seq: 11, data: { message: { content: [{ type: 'text', text: 'the build runs with pnpm test.' }] } } },
@@ -368,7 +368,7 @@ describe('memory tools', () => {
   it('memory_import skips denied candidates and reports none imported', async () => {
     const { box, harness, readSessionImpl } = await toolkit({ allowed: false })
     readSessionImpl.mockResolvedValueOnce({
-      header: { id: 'past-sess', cwd: WS },
+      session: { id: 'past-sess', cwd: WS },
       events: [{ type: 'assistant/message', seq: 5, data: { message: { content: [{ type: 'text', text: 'we use pnpm here.' }] } } }],
     })
     const result = await call(box, 'memory_import', { session_id: 'past-sess', query: 'pnpm' }, execFor())
@@ -378,7 +378,7 @@ describe('memory tools', () => {
 
   it('memory_import enforces exact-cwd authorization and rejects the calling session', async () => {
     const { box, readSessionImpl } = await toolkit()
-    readSessionImpl.mockResolvedValueOnce({ header: { id: 'foreign', cwd: '/elsewhere' }, events: [] })
+    readSessionImpl.mockResolvedValueOnce({ session: { id: 'foreign', cwd: '/elsewhere' }, events: [] })
     await expectMemoryError(
       call(box, 'memory_import', { session_id: 'foreign', query: 'x' }, execFor()),
       'MEMORY_UNAUTHORIZED',

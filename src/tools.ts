@@ -593,7 +593,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             throw new MemoryError('MEMORY_UNAVAILABLE', `memory_import: could not read session ${args.session_id}: ${String(error)}`, { cause: error })
           }
           // Exact-cwd authorization (the same rule dsh-tool-session-query applies).
-          if (snapshot.header.cwd !== caller.cwd) {
+          if (snapshot.session.cwd !== caller.cwd) {
             throw new MemoryError('MEMORY_UNAUTHORIZED', `memory_import: session ${args.session_id} is not in this workspace`)
           }
           const candidates: Array<{ text: string; seq: number }> = []
