@@ -9,7 +9,7 @@ For this project that means:
    merged into `main`. **Every PR passes two gates before merging**: an
    independent subagent review (fresh context, template in
    `docs/review-prompt.md`, verdict APPROVE/REQUEST_CHANGES) and a green CI —
-   a failed review sends the branch back for fixes and re-review. See
+   a failed review or a red CI sends the branch back for fixes and re-review. See
    `AGENTS.md` in the repo root for the full convention, including the
    DSH-sandbox specifics (credentials, retries, Contents-API fallback).
 2. **Code contributions**: PRs to this repository. Keep the architecture

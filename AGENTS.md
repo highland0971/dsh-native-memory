@@ -32,7 +32,8 @@ git push -u origin issue-N-slug          # 推送(见 §4 凭据)
    `APPROVE` 或 `REQUEST_CHANGES`。REQUEST_CHANGES → 同分支修复后**重新审查**,
    不得合入。审查是提交者之外的第二人意见 — 提交者的自述不可替代。
 2. **CI 绿** — 与审查并行等待;两门全过才 squash 合入:
-   `PATCH /repos/…/pulls/<n>/merge {"merge_method":"squash"}`。
+   `PUT /repos/…/pulls/<n>/merge {"merge_method":"squash"}`(merge-a-pull-request
+   端点是 PUT,不是 PATCH)。
 
 ## 3. 环境事实(本机 DSH 沙箱)
 
