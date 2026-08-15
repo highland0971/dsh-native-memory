@@ -36,6 +36,10 @@ Any field can be overridden in your profile patch
     maxFactsPerWorkspace: 300
 ```
 
+A patch replaces the row's whole config, but every omitted field falls back
+to its built-in default (300 facts, 2000 chars/fact, 8 profile entries × 240
+chars, approval on) — the partial override above is therefore safe.
+
 ## Verification
 
 ```text

@@ -13,3 +13,6 @@ pnpm-debug.log*
 .pnpm-store/
 .pnpm-cache/
 .npm-cache/
+
+# scratch verification home for the isolated boot test (docs/handoff.md §6)
+.verify-home/

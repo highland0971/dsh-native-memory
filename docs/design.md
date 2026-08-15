@@ -68,8 +68,11 @@ keeps it cheap.
 2. **`memory_recall`** — read-only scan over active facts of the caller's
    workspace (text first, tags second, recency tiebreak).
 3. **`memory_search`** — FTS over past sessions via
-   `ctx.sessionQuery.searchEvents`, exact-cwd authorized (same rule as
-   dsh-tool-session-query). Requires the bundle's FTS patch (below).
+   `ctx.sessionQuery.searchSessions` with an exact-cwd session filter (the
+   same API and authorization rule dsh-tool-session-query's `session_search`
+   applies — §9's earlier `searchEvents` name is the within-one-session
+   variant, not the cross-session shape). Requires the bundle's FTS patch
+   (below).
 4. **`memory_profile`** — read the workspace profile; propose changes, then
    land them through `memory_remember` (gated).
 
@@ -122,7 +125,7 @@ Two entries (a patch replaces whole configs; the user's layer wins):
   `domainTable(schema)` zod v4 — packages/storage/storage-domain.
 - `ctx.approval.request({agent, toolName, callId?, reason?})` —
   packages/interaction/user-approval/src/index.ts:153.
-- `ctx.sessionQuery.searchEvents` + `SESSION_QUERY_SEARCH_DISABLED` —
+- `ctx.sessionQuery.searchSessions` + `SESSION_QUERY_SEARCH_DISABLED` —
   packages/session-query; sqlite config `openAt: startup|first-search|never`.
 - Bundle mechanism: `"dsh": {"bundle": {"patch": "./cordis.patch.yml"}}`,
   installed via `dsh plugin add` (npm / git / path / tarball), joined to
