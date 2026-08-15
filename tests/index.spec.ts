@@ -20,6 +20,7 @@ interface RegisteredTool {
 interface FakeCtx {
   effect(cb: () => () => void): () => void
   get(name: string): unknown
+  on(name: string, listener: unknown): unknown
   tools: { register(definition: RegisteredTool): () => void }
   logger(name: string): { warn(...args: unknown[]): void }
   defs: Map<string, RegisteredTool>
@@ -31,6 +32,7 @@ function fakeCtx(options: { storageDomain?: unknown; approval?: unknown } = {}) 
   const sections: unknown[] = []
   const fake: FakeCtx = {
     effect: cb => cb(),
+    on: () => {},
     get: (name: string) => {
       if (name === 'storageDomain') return options.storageDomain
       if (name === 'approval') return options.approval

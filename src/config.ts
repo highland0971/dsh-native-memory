@@ -48,6 +48,17 @@ export const Config = z.object({
   proposalMaxPending: z.number().int().min(1).max(64).default(16),
   /** Pending proposals older than this many days are dropped from display. */
   proposalTtlDays: z.number().int().min(1).max(365).default(7),
+  /**
+   * Compaction drift guard (ON by default): when a compaction summary drops
+   * literal anchors from the shadowed turns, record a bounded alarm and show
+   * it in the next sessions' prompt as DATA to verify. Deterministic, zero
+   * LLM, zero extra model call.
+   */
+  compactionGuard: z.boolean().default(true),
+  /** Drift alarms older than this many hours are dropped from display. */
+  guardAlarmTtlHours: z.number().int().min(1).max(720).default(24),
+  /** Upper bound on active drift alarms per workspace (oldest expire first). */
+  guardAlarmMax: z.number().int().min(1).max(16).default(3),
 })
 
 export type ConfigType = z.infer<typeof Config>

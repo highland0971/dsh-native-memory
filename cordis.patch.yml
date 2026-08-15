@@ -57,3 +57,8 @@
         proposalMaxFacts: 8
         proposalMaxPending: 16
         proposalTtlDays: 7
+        # Compaction drift guard (ON): anchors a summary dropped surface as
+        # DATA to verify in the next sessions' prompt. Deterministic, no LLM.
+        compactionGuard: true
+        guardAlarmTtlHours: 24
+        guardAlarmMax: 3

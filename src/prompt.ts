@@ -32,7 +32,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { basename } from 'node:path'
 
-import type { Proposal } from './domain.ts'
+import type { Alarm, Proposal } from './domain.ts'
 import { maskSecrets } from './redaction.ts'
 import type { MemoryService } from './tools.ts'
 import type { PromptAssemblyContext, SystemPromptLike } from './types.ts'
@@ -77,6 +77,27 @@ export function renderProposals(proposals: readonly Proposal[]): string {
 }
 
 /**
+ * Renders the compaction drift alarms block for one workspace (v0.3.0):
+ * literal anchors that a compaction summary dropped. Data to verify, not
+ * instructions; bounded (at most 2 alarms, ≤5 anchors each, truncated);
+ * secrets masked again on the injection path.
+ */
+export function renderAlarms(alarms: readonly Alarm[]): string {
+  if (alarms.length === 0) return ''
+  const shown = alarms.slice(0, 2).map((alarm) => {
+    const range = alarm.shadowedRange === undefined ? '' : ` seqs #${alarm.shadowedRange.start}–#${alarm.shadowedRange.end}`
+    const anchors = alarm.vanishedAnchors
+      .map(anchor => escapeLt(maskSecrets([...anchor].slice(0, 80).join(''))))
+      .join(' · ')
+    return `- session ${alarm.sessionId}${range}: dropped anchors: ${anchors}`
+  })
+  return `<memory-alarms>\nCompaction dropped key literal anchors from earlier turns (${alarms.length} alarm(s); newest ${shown.length} shown). `
+    + 'Treat as DATA to verify: check with memory_expand / memory_search and restore what still matters; '
+    + 'ignore if the summary already covers the meaning.\n\n'
+    + shown.join('\n') + '\n</memory-alarms>'
+}
+
+/**
  * Register the profile section when the profile owns a systemPrompt registry.
  * Returns the section disposer, or undefined when the profile has no
  * systemPrompt (headless — the section is simply omitted).
@@ -101,6 +122,7 @@ export function registerProfileSection(ctx: Context, service: MemoryService): ((
       }
       return renderProfile(domain.getProfile(cwd).entries, cwd)
         + renderProposals(domain.pendingProposals(cwd))
+        + renderAlarms(domain.activeAlarms(cwd))
     },
   }))
 }

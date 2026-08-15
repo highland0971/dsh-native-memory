@@ -4,7 +4,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 
-import { registerProfileSection, renderProfile, renderProposals } from '../src/prompt.ts'
+import { registerProfileSection, renderAlarms, renderProfile, renderProposals } from '../src/prompt.ts'
 import type { MemoryService } from '../src/tools.ts'
 import { bootMemory } from './helpers/harness.ts'
 
@@ -122,6 +122,42 @@ describe('renderProposals', () => {
     expect(text).not.toContain('four')
     expect(text).not.toContain('ghp_')
     expect(text).toContain('[REDACTED]')
+  })
+})
+
+describe('renderAlarms', () => {
+  it('renders nothing without alarms', () => {
+    expect(renderAlarms([])).toBe('')
+  })
+
+  it('renders at most 2 alarms with anchors, range, and masking', () => {
+    const mk = (id: string, anchors: string[], createdAt: number) => ({
+      id,
+      workspacePath: WS,
+      sessionId: 'sess-' + id,
+      vanishedAnchors: anchors,
+      shadowedRange: { start: 10, end: 12 },
+      createdAt,
+      state: 'active' as const,
+    })
+    const alarms = [
+      mk('a', ['/home/user/.npmrc', `ghp_${'a'.repeat(36)}`], Date.now()),
+      mk('b', ['PORT=3000'], Date.now() - 1),
+      mk('c', ['IGNORED_ANCHOR'], Date.now() - 2),
+    ]
+    const text = renderAlarms(alarms)
+    expect(text.startsWith('<memory-alarms>\n')).toBe(true)
+    expect(text).toContain('3 alarm(s)')
+    expect(text).toContain('newest 2 shown')
+    expect(text).toContain('sess-a')
+    expect(text).toContain('sess-b')
+    expect(text).not.toContain('sess-c')
+    expect(text).toContain('seqs #10–#12')
+    expect(text).toContain('/home/user/.npmrc')
+    expect(text).toContain('PORT=3000')
+    expect(text).toContain('[REDACTED]')
+    expect(text).not.toContain('ghp_')
+    expect(text).toContain('DATA to verify')
   })
 })
 

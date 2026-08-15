@@ -62,6 +62,10 @@ Opt-in session-end proposals (`proposeOnSessionEnd: true`): one cheap LLM call
 distills a finished session into candidate facts shown in the next sessions;
 they become facts only through the approval-gated `memory_remember`.
 
+A compaction drift guard (`compactionGuard: true`, on by default) surfaces
+literal anchors a compaction summary dropped, as data to verify in the next
+sessions — deterministic, no LLM.
+
 ## Development
 
 ```sh
