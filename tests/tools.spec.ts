@@ -408,6 +408,15 @@ describe('memory tools', () => {
     expect(box.disposeCalls).toBe(1)
   })
 
+  it('memory_recall bumps access counters without any approval ask', async () => {
+    const { box, harness, asks } = await toolkit({ allowed: false })
+    const fact = await harness.domain.remember(makeFact({ workspacePath: WS, text: 'ci uses pnpm' }))
+    const result = await call(box, 'memory_recall', { query: 'ci' }, execFor())
+    expect(String(result)).toContain('ci uses pnpm')
+    expect(asks).toHaveLength(0)
+    expect(harness.domain.getFact(WS, fact.id)?.accessCount).toBe(1)
+  })
+
   it('memory_expand returns the cited excerpt by fact id', async () => {
     const { box, harness, readSessionImpl } = await toolkit()
     const fact = await harness.domain.remember(makeFact({ workspacePath: WS, sessionId: 'past-sess', seq: 42, text: 'pnpm store is local' }))

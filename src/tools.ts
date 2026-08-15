@@ -456,7 +456,8 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
         name: 'memory_recall',
         description:
           'Deterministic keyword scan over this workspace\'s active facts: exact tag matches rank first, case-insensitive text '
-          + 'substring next, recency breaks ties. Matching is literal, not semantic — query in the language the fact is likely '
+          + 'substring next, fuzzy tag overlap last; within the same tier, freshness (updatedAt age) and past recall frequency '
+          + 'break ties, then recency. Matching is literal, not semantic — query in the language the fact is likely '
           + 'written in, or try both languages. Pass a query to filter; omit it to list the newest facts.',
         parameters: {
           type: 'object',
@@ -471,6 +472,17 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const args = parseArgs(recallArgs, rawArgs, 'memory_recall')
           const domain = await openDomain(service)
           const facts = domain.recall(caller.cwd, args.query, args.limit)
+          // Metadata-only write-back: bumps the access counters that break
+          // ties in future recalls. Content fields stay untouched, so this
+          // never asks the human — and a failed counter write must never
+          // fail the read itself.
+          if (facts.length > 0) {
+            try {
+              await domain.touchFacts(caller.cwd, facts.map(fact => fact.id))
+            } catch {
+              // best-effort; see above
+            }
+          }
           if (facts.length === 0) {
             return args.query === undefined
               ? 'no active facts in this workspace yet'

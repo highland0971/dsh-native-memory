@@ -68,8 +68,14 @@ keeps it cheap.
 2. **`memory_recall`** — read-only scan over active facts of the caller's
    workspace. Deterministic three-tier keyword scoring (v0.2.0): exact tag
    match > case-insensitive text substring (CJK bigram tokenization, whole-
-   query boost) > fuzzy tag overlap; recency tiebreak. Literal, not semantic
-   — cross-language queries need the query language to match the fact's.
+   query boost) > fuzzy tag overlap; recency tiebreak. Within one tier
+   (v0.3.0), freshness (updatedAt age: fresh ≤ `recallFreshWindowDays`,
+   current ≤ `recallStaleWindowDays`, else stale, weights 1.0/0.8/0.5) and
+   access frequency (`accessCount`/10, capped at 1) break ties — each signal
+   contributes at most 0.4, so a lower text tier can never outrank a higher
+   one. Recall bumps the access counters through a metadata-only write-back
+   (content fields untouched — no approval). Literal, not semantic —
+   cross-language queries need the query language to match the fact's.
 3. **`memory_search`** — FTS over past sessions via
    `ctx.sessionQuery.searchSessions` with an exact-cwd session filter (the
    same API and authorization rule dsh-tool-session-query's `session_search`
