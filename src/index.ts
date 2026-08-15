@@ -1,22 +1,29 @@
 // dsh-native-memory — plugin entry (Host half).
 //
-// This skeleton documents the design contract. Every API referenced below was
-// verified against deepseek-harness 0.1.0-rc.5 (commit 47f9438) at the cited
-// file:line. Fill in the TODO bodies; do not change the architecture without
-// updating docs/design.md.
-//
 // Planes: this row is inserted into the HOST composition by the bundle patch
 // (cordis.patch.yml). Memory crosses sessions, so it lives host-side; it
 // publishes NO service and consumes the host's registries, so no isolate
 // realm is involved. The optional per-workspace prompt profile is a
 // systemPrompt section (host-plane, layered per scope like all prompt input).
+//
+// Degradation (design §7): `storageDomain` absent (headless profile) → the
+// plugin stays mounted, memory tools answer MEMORY_DISABLED, the prompt
+// section is omitted. `sessionQuery` absent → memory_search answers
+// MEMORY_DISABLED. `approval` absent → writes fail closed. Domain
+// version-mismatch → loud MEMORY_UNAVAILABLE at first open; memory offline
+// until migrated. No hang, no crash.
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { Config, type ConfigType } from './config.ts'
-import type { MemoryDomain } from './domain.ts'
-import { registerMemoryTools } from './tools.ts'
+import { buildApprovalGate } from './approval.ts'
+import { Config } from './config.ts'
+import { openMemoryDomain } from './domain.ts'
+import type { MemoryDomain, StorageDomainFacility } from './domain.ts'
+import { MemoryError } from './errors.ts'
 import { registerProfileSection } from './prompt.ts'
+import { registerMemoryTools } from './tools.ts'
+import type { MemoryService } from './tools.ts'
+import type { SessionQueryServiceLike } from './types.ts'
 
 export const name = 'dsh-native-memory'
 
@@ -29,32 +36,58 @@ export const inject = ['tools']
 export function apply(ctx: Context, config: unknown) {
   const resolved = Config.parse(config ?? {})
 
-  // The memory domain rides the host's storage-domain facility (web profile:
-  // JSON backend, root ~/.dsh/storages). Absent facility (headless) → the
-  // plugin stays mounted but memory tools answer a disabled error.
-  const storageDomain = ctx.get('storageDomain')
-  let domain: MemoryDomain | undefined
-  if (storageDomain !== undefined) {
-    // open() is lazy here on purpose: no file is touched until the first
-    // memory operation. storage-domain: packages/storage/storage-domain
-    //   open(spec): Promise<Domain>   — see src/index.ts of that package.
-    // TODO: open the domain asynchronously and hold it for the tool layer;
-    // handle DomainError('backend-not-found') and version mismatch loudly.
+  const storageDomain = ctx.get('storageDomain') as StorageDomainFacility | undefined
+  const sessionQuery = ctx.get('sessionQuery') as SessionQueryServiceLike | undefined
+  const approvalGate = buildApprovalGate(ctx, resolved.approvalWrites)
+
+  // Lazy open, memoized per plugin run: no storage unit is touched until the
+  // first memory operation (or the first prompt assembly, which only kicks
+  // the open without awaiting it). Failures are memoized too — tools answer
+  // the same loud error until the deployment fixes the domain.
+  let domainPromise: Promise<MemoryDomain> | undefined
+  let opened: MemoryDomain | undefined
+  const getDomain = (): Promise<MemoryDomain> => {
+    if (storageDomain === undefined) {
+      return Promise.reject(new MemoryError(
+        'MEMORY_DISABLED',
+        'the storage-domain facility is not available in this profile — memory is disabled here',
+      ))
+    }
+    domainPromise ??= openMemoryDomain(storageDomain, resolved).then(domain => {
+      opened = domain
+      return domain
+    })
+    return domainPromise
   }
 
-  // Cross-session recall: session-query is provided by dsh-base in every
-  // profile (session-query-sqlite). Search requires FTS — enabled by our
-  // bundle patch (openAt: first-search). Exact reads/titles/lineage work
-  // even where search stays disabled.
-  const sessionQuery = ctx.get('sessionQuery')
+  const service: MemoryService = {
+    config: resolved,
+    storageDomainAvailable: storageDomain !== undefined,
+    getDomain,
+    openedDomain: () => opened,
+    ensureDomain: () => {
+      if (storageDomain !== undefined) void getDomain().catch(() => {})
+    },
+    approvalGate,
+    sessionQuery,
+  }
 
-  // Approval-gated writes. The approval stack is host-plane; missing it
-  // (should not happen in a real profile) fails writes closed.
-  const approval = ctx.get('approval')
-
-  // TODO(implement): build the service handle { domain, sessionQuery, approval, config }
-  // and pass it to the two registration layers below.
-
-  registerMemoryTools(ctx, { /* TODO: handle */ })
-  if (resolved.injectProfile) registerProfileSection(ctx, { /* TODO: handle */ })
+  ctx.effect(() => {
+    const disposeTools = registerMemoryTools(ctx, service)
+    const disposeProfile = resolved.injectProfile ? registerProfileSection(ctx, service) : undefined
+    return async () => {
+      disposeTools()
+      disposeProfile?.()
+      // Close the domain if it ever opened: writes drain, the unit releases,
+      // and the domain name frees up for a later open.
+      if (domainPromise !== undefined) {
+        try {
+          const domain = await domainPromise
+          await domain.close()
+        } catch {
+          // A never-opened or failed-open domain has nothing to close.
+        }
+      }
+    }
+  })
 }
