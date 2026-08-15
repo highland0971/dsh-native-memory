@@ -1,0 +1,46 @@
+# dsh-native-memory bundle patch.
+#
+# Applied as one layer after the profile's shipped bundles (dsh-base and the
+# mode bundle) and before the user's own profile cordis.patch.yml — the user's
+# layer wins. Two changes:
+#
+#   1. session-query-sqlite config override: enable full-text search so
+#      cross-session recall works. The shipped default is `openAt: never`
+#      (search calls fail with SESSION_QUERY_SEARCH_DISABLED); `first-search`
+#      defers the node:sqlite import and index open to the first search call.
+#      The durable index lives next to the other storage units.
+#
+#   2. One host-plane plugin row: the memory service. Memory is a
+#      cross-session capability, so its row belongs to the HOST composition
+#      (plane rule: anything crossing sessions stays host-side), never loose
+#      inside an agent preset. It publishes no service — it consumes the
+#      host's registries — so it needs no isolate realm.
+#
+# Config note: a patch REPLACES a targeted row's whole `config` rather than
+# merging into it. Any field the deployment customized on
+# `session-query-sqlite` is therefore overridden here and must be restated
+# in the user's own cordis.patch.yml, which always applies last.
+
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('storages/session-search.sqlite')
+    openAt: first-search
+
+- insert:
+    - id: dsh-native-memory
+      name: 'dsh-native-memory'
+      config:
+        # Bounded workspace profile injected into the system prompt of every
+        # session (order 88, before tool guidance). Disable here or in a
+        # later patch layer when prompt overhead matters more than recall.
+        injectProfile: true
+        # Durable facts per workspace. Hard caps keep recall deterministic
+        # and the always-on profile bounded.
+        maxFactsPerWorkspace: 300
+        maxFactChars: 2000
+        # The always-injected workspace profile: few, dense entries.
+        maxProfileEntries: 8
+        maxProfileEntryChars: 240
+        # Write tools (remember / edit / forget) pass the host approval
+        # stack; every ask/outcome pair lands on the requesting session log.
+        approvalWrites: true
