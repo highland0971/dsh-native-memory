@@ -31,7 +31,7 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 
 | 工具 | 类型 | 审批 |
 |---|---|---|
-| `memory_remember` | 在本工作区新增/更新一条事实 | 需要 |
+| `memory_remember` | 在本工作区新增/更新一条事实（默认拒存密钥形态文本） | 需要 |
 | `memory_edit` | 替换一条事实 | 需要 |
 | `memory_forget` | 归档一条事实（软删除） | 需要 |
 | `memory_recall` | 确定性三档关键词扫描（标签 > 文本 > 模糊；档内按新鲜度/访问频次决胜） | 不需要 |
@@ -42,6 +42,9 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 | `memory_profile` | 读取常驻注入的工作区档案 | 不需要 |
 
 每条事实都记录来源 `(sessionId, seq)`——记忆始终可从无损会话日志还原。
+
+写入默认拒绝密钥形态文本（token / 密钥 / 密码）；bundle patch 里 `secretPolicy: "mask" | "off"`
+可放宽。凭据赋值检测可能误伤 ≥16 字符的良性 `token: …` 值。注入与工具输出恒打码。
 
 ## 开发
 

@@ -25,6 +25,12 @@ export const Config = z.object({
    */
   recallFreshWindowDays: z.number().int().min(0).default(7),
   recallStaleWindowDays: z.number().int().min(0).default(90),
+  /**
+   * Secret handling for memory writes: 'reject' fails the write (default),
+   * 'mask' stores the text with secrets replaced by [REDACTED], 'off' stores
+   * as-is. Prompt injection and tool echo are ALWAYS masked regardless.
+   */
+  secretPolicy: z.enum(['reject', 'mask', 'off']).default('reject'),
 })
 
 export type ConfigType = z.infer<typeof Config>

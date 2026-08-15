@@ -44,6 +44,7 @@ import type { ConfigType } from './config.ts'
 import type { Fact, MemoryDomain } from './domain.ts'
 import { suggestConsolidations } from './domain.ts'
 import { MemoryError, hasCode } from './errors.ts'
+import { detectSecrets, maskSecrets } from './redaction.ts'
 import type { CallerAgent, SessionEventLike, SessionQueryServiceLike, ToolExec } from './types.ts'
 
 /** Handle assembled in src/index.ts and shared by the registration layers. */
@@ -153,10 +154,30 @@ async function openDomain(service: MemoryService): Promise<MemoryDomain> {
   }
 }
 
-/** Render one fact as a compact recall line. */
+/** Render one fact as a compact recall line (secrets always masked on echo). */
 function factLine(fact: Fact): string {
   const tags = fact.tags.length > 0 ? ` (tags: ${fact.tags.join(', ')})` : ''
-  return `- ${fact.id} [${fact.kind}] ${truncate(fact.text, 400)}${tags} — updated ${iso(fact.updatedAt)}`
+  return `- ${fact.id} [${fact.kind}] ${truncate(maskSecrets(fact.text), 400)}${tags} — updated ${iso(fact.updatedAt)}`
+}
+
+/**
+ * Enforce the secret policy on one piece of text before it is stored.
+ * Returns the text to store (masked when the policy says so); 'reject'
+ * throws MEMORY_SECRET_REJECTED. Call BEFORE any approval ask — a doomed
+ * write must not waste a human approval, and the reason must never carry
+ * the secret either.
+ */
+function enforceSecretPolicy(service: MemoryService, tool: string, text: string): string {
+  const kinds = detectSecrets(text)
+  if (kinds.length === 0) return text
+  const policy = service.config.secretPolicy
+  if (policy === 'off') return text
+  if (policy === 'mask') return maskSecrets(text)
+  throw new MemoryError(
+    'MEMORY_SECRET_REJECTED',
+    `${tool}: text contains secret-shaped content (${kinds.join(', ')}) — nothing was stored; `
+    + 'remove the secret, or set secretPolicy:"mask" / "off" in the plugin config',
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +324,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
               }
               entries.splice(index, 1)
             } else {
-              entries[index] = args.text
+              entries[index] = enforceSecretPolicy(service, 'memory_remember', args.text)
             }
             if (entries.length > service.config.maxProfileEntries) {
               throw new MemoryError(
@@ -320,7 +341,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
                 )
               }
             }
-            const reason = writeReason('Update the workspace profile', caller.cwd, truncate(args.text, 120))
+            const reason = writeReason('Update the workspace profile', caller.cwd, truncate(maskSecrets(args.text), 120))
             await approveWrite(service, exec as ToolExec, caller, 'memory_remember', reason)
             const next = await domain.putProfile({ workspacePath: caller.cwd, entries, updatedAt: Date.now() })
             return `workspace profile updated: ${next.entries.length} entries`
@@ -336,12 +357,15 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
               'memory_remember: fact text must not be empty (empty text only drops a profile entry, with target:"profile")',
             )
           }
+          // Secret policy BEFORE caps and approval: the caps measure the text
+          // that will actually be stored (masked text is shorter).
+          const text = enforceSecretPolicy(service, 'memory_remember', args.text)
           // Pre-check caps BEFORE the approval ask; domain.remember stays the
           // authoritative (race-proof) gate.
-          if ([...args.text].length > service.config.maxFactChars) {
+          if ([...text].length > service.config.maxFactChars) {
             throw new MemoryError(
               'MEMORY_CAP_EXCEEDED',
-              `fact text is ${[...args.text].length} characters, over the cap of ${service.config.maxFactChars}; `
+              `fact text is ${[...text].length} characters, over the cap of ${service.config.maxFactChars}; `
               + 'split the fact or consolidate with memory_edit',
             )
           }
@@ -358,7 +382,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             id: existing?.id ?? randomUUID(),
             workspacePath: caller.cwd,
             kind: args.kind ?? existing?.kind ?? 'fact',
-            text: args.text,
+            text: text,
             tags: args.tags ?? existing?.tags ?? [],
             sessionId: caller.sessionId,
             seq: caller.seq,
@@ -400,24 +424,25 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           if (existing === undefined) {
             throw new MemoryError('MEMORY_NOT_FOUND', `memory_edit: no fact '${args.id}' in this workspace`)
           }
-          // Pre-check the text cap BEFORE the approval ask (domain.remember
+          // Secret policy and text cap BEFORE the approval ask (domain.remember
           // stays the authoritative gate).
-          if (args.text !== undefined && [...args.text].length > service.config.maxFactChars) {
+          const text = args.text === undefined ? undefined : enforceSecretPolicy(service, 'memory_edit', args.text)
+          if (text !== undefined && [...text].length > service.config.maxFactChars) {
             throw new MemoryError(
               'MEMORY_CAP_EXCEEDED',
-              `fact text is ${[...args.text].length} characters, over the cap of ${service.config.maxFactChars}; shorten it`,
+              `fact text is ${[...text].length} characters, over the cap of ${service.config.maxFactChars}; shorten it`,
             )
           }
           const next: Fact = {
             ...existing,
-            text: args.text ?? existing.text,
+            text: text ?? existing.text,
             kind: args.kind ?? existing.kind,
             tags: args.tags ?? existing.tags,
             sessionId: caller.sessionId,
             seq: caller.seq,
             updatedAt: Date.now(),
           }
-          const reason = writeReason(`Edit fact ${next.id}`, caller.cwd, truncate(next.text, 120))
+          const reason = writeReason(`Edit fact ${next.id}`, caller.cwd, truncate(maskSecrets(next.text), 120))
           await approveWrite(service, exec as ToolExec, caller, 'memory_edit', reason)
           const stored = await domain.remember(next)
           return `edited fact ${stored.id} — cited to session ${stored.sessionId}#${stored.seq}`
@@ -442,7 +467,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           if (existing === undefined || existing.state === 'archived') {
             throw new MemoryError('MEMORY_NOT_FOUND', `memory_forget: no active fact '${args.id}' in this workspace`)
           }
-          const reason = writeReason(`Forget fact ${existing.id} [${existing.kind}]`, caller.cwd, truncate(existing.text, 120))
+          const reason = writeReason(`Forget fact ${existing.id} [${existing.kind}]`, caller.cwd, truncate(maskSecrets(existing.text), 120))
           await approveWrite(service, exec as ToolExec, caller, 'memory_forget', reason)
           const archived = await domain.archive(caller.cwd, args.id)
           if (!archived) {
@@ -617,7 +642,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const range = startSeq !== undefined && endSeq !== undefined ? ` (events #${startSeq}–#${endSeq})` : ''
           const head = fact === undefined
             ? `citation ${sessionId}#${seq}`
-            : `fact ${fact.id} [${fact.kind}] — ${truncate(fact.text, 400)}`
+            : `fact ${fact.id} [${fact.kind}] — ${truncate(maskSecrets(fact.text), 400)}`
           return `${head}\ncited to session ${sessionId}#${seq}${range}:\n\n${excerpt}`
         },
       }),
@@ -637,7 +662,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const max = service.config.maxProfileEntries
           const header = `Workspace profile: ${profile.entries.length}/${max} entries`
           if (profile.entries.length === 0) return `${header} (empty)`
-          const body = profile.entries.map((entry, index) => `${index}. ${entry}`).join('\n')
+          const body = profile.entries.map((entry, index) => `${index}. ${maskSecrets(entry)}`).join('\n')
           return `${header}\n${body}\n\nUpdate with memory_remember: target:"profile", profile_index:<n> to replace entry n, `
             + `empty text to drop it, or omit profile_index to append.`
         },
@@ -663,7 +688,7 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           }
           const body = candidates.map((candidate, index) =>
             `${index + 1}. ${candidate.a.id} + ${candidate.b.id} `
-            + `(${Math.round(candidate.similarity * 100)}%): ${truncate(candidate.suggestedText, 300)}`,
+            + `(${Math.round(candidate.similarity * 100)}%): ${truncate(maskSecrets(candidate.suggestedText), 300)}`,
           ).join('\n')
           return `${header}\n\nMerge candidates (near-duplicate text):\n${body}\n\n`
             + `Apply with memory_edit (rewrite one fact to the merged text) + memory_forget (drop the other) — both ask the human.`
@@ -721,16 +746,32 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           if (limited.length === 0) {
             return `no matching text in past session ${args.session_id} for ${JSON.stringify(args.query)}`
           }
+          // Secret policy per candidate BEFORE the budget pre-check: skipped
+          // secret candidates must never inflate the cap accounting, and a
+          // rejected candidate must never reach an approval ask.
+          const passable: Array<{ text: string; seq: number }> = []
+          let skippedSecrets = 0
+          for (const candidate of limited) {
+            try {
+              passable.push({ text: enforceSecretPolicy(service, 'memory_import', candidate.text), seq: candidate.seq })
+            } catch (error) {
+              if (error instanceof MemoryError && error.code === 'MEMORY_SECRET_REJECTED') {
+                skippedSecrets += 1
+                continue
+              }
+              throw error
+            }
+          }
           // Budget pre-check BEFORE any approval ask (same discipline as #2).
-          if (domain.activeCount(caller.cwd) + limited.length > service.config.maxFactsPerWorkspace) {
+          if (domain.activeCount(caller.cwd) + passable.length > service.config.maxFactsPerWorkspace) {
             throw new MemoryError(
               'MEMORY_CAP_EXCEEDED',
-              `importing ${limited.length} facts would exceed the ${service.config.maxFactsPerWorkspace} cap; consolidate first (memory_consolidate)`,
+              `importing ${passable.length} facts would exceed the ${service.config.maxFactsPerWorkspace} cap; consolidate first (memory_consolidate)`,
             )
           }
           const imported: string[] = []
           let denied = 0
-          for (const candidate of limited) {
+          for (const candidate of passable) {
             const reason = writeReason(`Import fact from session ${args.session_id}#${candidate.seq}`, caller.cwd, truncate(candidate.text, 120))
             const allowed = await service.approvalGate.request({
               agent: caller.agent,
@@ -760,10 +801,12 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
             imported.push(`${stored.id} (cited to session ${args.session_id}#${stored.seq})`)
           }
           if (imported.length === 0) {
-            return `no facts imported from session ${args.session_id}: none of the ${limited.length} candidates were approved`
+            const secretPart = skippedSecrets > 0 ? ` (${skippedSecrets} secret candidate(s) skipped)` : ''
+            return `no facts imported from session ${args.session_id}: none of the ${passable.length} candidates were approved${secretPart}`
           }
           const deniedPart = denied > 0 ? `; ${denied} candidate(s) not approved` : ''
-          return `imported ${imported.length} fact(s) from session ${args.session_id}${deniedPart}:\n${imported.join('\n')}`
+          const secretPart = skippedSecrets > 0 ? `; ${skippedSecrets} secret candidate(s) skipped` : ''
+          return `imported ${imported.length} fact(s) from session ${args.session_id}${deniedPart}${secretPart}:\n${imported.join('\n')}`
         },
       }),
     ]

@@ -127,6 +127,13 @@ Two entries (a patch replaces whole configs; the user's layer wins):
 - Reads: exact-cwd workspace authorization — a session can only touch facts
   and profiles for its own workspace path.
 - Injection: bounded, framed as data, order 88; hardening backlog below.
+- Secret redaction (v0.3.0): every content write runs the deterministic
+  secret detectors FIRST (before caps and before the approval ask) under
+  `secretPolicy: reject|mask|off` (default reject — the write fails with
+  MEMORY_SECRET_REJECTED, and the error names kinds only, never the secret).
+  Injection and tool echo are masked ALWAYS, independent of the policy, so a
+  row stored under `off` (or by an older version) never re-enters the model
+  context verbatim.
 - The bundle runs third-party code with the user's own permissions — README
   must carry the same warning the awesome list requires.
 

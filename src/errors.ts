@@ -13,6 +13,7 @@ export type MemoryErrorCode =
   | 'MEMORY_INVALID_ARGS'
   | 'MEMORY_NOT_FOUND'
   | 'MEMORY_CAP_EXCEEDED'
+  | 'MEMORY_SECRET_REJECTED'
   | 'MEMORY_UNAVAILABLE'
   /** Mirrored from the session-query taxonomy when FTS is disabled. */
   | 'SESSION_QUERY_SEARCH_DISABLED'
