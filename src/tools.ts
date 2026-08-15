@@ -9,7 +9,7 @@
 //     execute(args, exec: ToolRunContext): Promise<unknown>,
 //   }
 //
-// Tool set (eight tools — the design §5 list plus consolidation and import):
+// Tool set (nine tools — the design §5 list plus consolidation, import, expand):
 //
 //   memory_remember  (write, approval-gated) — add or update one fact (or one
 //                    workspace profile entry) in the caller's workspace.
@@ -19,6 +19,8 @@
 //                    active facts of the caller's workspace (text + tags).
 //   memory_search    (read, never gated)     — FTS over past sessions via
 //                    ctx.sessionQuery.searchSessions, exact-cwd authorized.
+//   memory_expand    (read, never gated)     — expand one fact's citation back
+//                    to the original session-log excerpt around the cited seq.
 //   memory_profile   (read, never gated)     — show the caller's workspace
 //   memory_consolidate (read, never gated)   — near-duplicate merge suggestions
 //                    plus the remaining cap budget; merges land through the gated edit/forget tools.
@@ -42,7 +44,7 @@ import type { ConfigType } from './config.ts'
 import type { Fact, MemoryDomain } from './domain.ts'
 import { suggestConsolidations } from './domain.ts'
 import { MemoryError, hasCode } from './errors.ts'
-import type { CallerAgent, SessionQueryServiceLike, ToolExec } from './types.ts'
+import type { CallerAgent, SessionEventLike, SessionQueryServiceLike, ToolExec } from './types.ts'
 
 /** Handle assembled in src/index.ts and shared by the registration layers. */
 export interface MemoryService {
@@ -199,6 +201,18 @@ const searchArgs = z.object({
   limit: z.number().int().min(1).max(20).optional(),
 })
 
+const expandArgs = z.object({
+  /** Expand this fact's citation (from memory_recall). */
+  id: z.string().min(1).optional(),
+  /** Alternative to id: the cited session. */
+  session_id: z.string().min(1).optional(),
+  /** Alternative to id: the cited log seq (requires session_id). */
+  seq: z.number().int().min(0).optional(),
+}).refine(
+  args => (args.id !== undefined) !== (args.session_id !== undefined && args.seq !== undefined),
+  { message: 'provide either id (the fact to expand) or both session_id and seq' },
+)
+
 const profileArgs = z.object({})
 
 const consolidateArgs = z.object({})
@@ -227,7 +241,19 @@ export function extractCandidateSentences(text: string, query: string): string[]
     .filter(sentence => sentence.length > 0 && sentence.toLowerCase().includes(folded))
 }
 
-/** Register all eight tools; returns the composite disposer. */
+/** Concatenated text of one durable log event (both known data shapes). */
+function eventText(event: SessionEventLike): string {
+  const blocks = event.data?.message?.content ?? event.data?.content ?? []
+  return blocks
+    .filter(block => block.type === 'text' && block.text !== undefined)
+    .map(block => block.text as string)
+    .join(' ')
+}
+
+/** Excerpt window around the cited seq: the event itself plus one neighbour each side. */
+const EXPAND_WINDOW_CHARS = 2000
+
+/** Register all nine tools; returns the composite disposer. */
 export function registerMemoryTools(ctx: Context, service: MemoryService): () => void {
   return ctx.effect(() => {
     const disposers: Array<() => void> = [
@@ -508,6 +534,79 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
               { cause: error },
             )
           }
+        },
+      }),
+
+      ctx.tools.register({
+        name: 'memory_expand',
+        description:
+          'Expand one fact\'s citation back to the original session log: given a fact id from memory_recall (or an explicit '
+          + 'session_id + seq), read that past session via the session-query log and return the exact excerpt around the cited '
+          + 'seq plus the event range. Read-only, exact-cwd authorized, zero LLM.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Fact id from memory_recall; expands that fact\'s (sessionId, seq) citation' },
+            session_id: { type: 'string', description: 'Alternative to id: the cited session' },
+            seq: { type: 'integer', minimum: 0, description: 'Alternative to id: the cited log seq (requires session_id)' },
+          },
+        },
+        output: TEXT_OUTPUT,
+        timeoutMs: 30_000,
+        execute: async (rawArgs, exec) => {
+          const caller = callerOf(exec as ToolExec)
+          const args = parseArgs(expandArgs, rawArgs, 'memory_expand')
+          if (service.sessionQuery === undefined) {
+            throw new MemoryError('MEMORY_DISABLED', 'memory_expand: the session-query service is not available in this profile')
+          }
+          const domain = await openDomain(service)
+          let fact: Fact | undefined
+          let sessionId: string
+          let seq: number
+          if (args.id !== undefined) {
+            fact = domain.getFact(caller.cwd, args.id)
+            if (fact === undefined) {
+              throw new MemoryError('MEMORY_NOT_FOUND', `memory_expand: no fact '${args.id}' in this workspace`)
+            }
+            sessionId = fact.sessionId
+            seq = fact.seq
+          } else {
+            if (args.session_id === undefined || args.seq === undefined) {
+              throw new MemoryError('MEMORY_INVALID_ARGS', 'memory_expand: provide either id, or both session_id and seq')
+            }
+            sessionId = args.session_id
+            seq = args.seq
+          }
+          let snapshot
+          try {
+            snapshot = await service.sessionQuery.readSession(sessionId)
+          } catch (error) {
+            throw new MemoryError(
+              'MEMORY_UNAVAILABLE',
+              `memory_expand: could not read session ${sessionId}: ${String(error)}`,
+              { cause: error },
+            )
+          }
+          // Exact-cwd authorization (the same rule memory_import applies).
+          if (snapshot.session.cwd !== caller.cwd) {
+            throw new MemoryError('MEMORY_UNAUTHORIZED', `memory_expand: session ${sessionId} is not in this workspace`)
+          }
+          const events = snapshot.events
+          const cited = events.findIndex(event => event.seq === seq)
+          if (cited === -1) {
+            throw new MemoryError('MEMORY_NOT_FOUND', `memory_expand: session ${sessionId} has no event at seq ${seq} (the citation is stale)`)
+          }
+          // The cited event plus one neighbour on each side, text-bearing only.
+          const windowEvents = events.slice(Math.max(0, cited - 1), Math.min(events.length, cited + 2))
+          const lines = windowEvents.map(eventText).filter(text => text.length > 0)
+          const excerpt = truncate(lines.join('\n'), EXPAND_WINDOW_CHARS)
+          const startSeq = windowEvents[0]?.seq
+          const endSeq = windowEvents[windowEvents.length - 1]?.seq
+          const range = startSeq !== undefined && endSeq !== undefined ? ` (events #${startSeq}–#${endSeq})` : ''
+          const head = fact === undefined
+            ? `citation ${sessionId}#${seq}`
+            : `fact ${fact.id} [${fact.kind}] — ${truncate(fact.text, 400)}`
+          return `${head}\ncited to session ${sessionId}#${seq}${range}:\n\n${excerpt}`
         },
       }),
 

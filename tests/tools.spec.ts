@@ -1,4 +1,4 @@
-// Tool surface tests: the eight tools register into ctx.tools; write tools
+// Tool surface tests: the nine tools register into ctx.tools; write tools
 // route through the approval gate (mocked) and fail closed; read tools never
 // ask; caller workspace authorization enforced via exec.agent.session.header.cwd.
 //
@@ -116,11 +116,12 @@ function expectMemoryError(promise: Promise<unknown>, code: string) {
 }
 
 describe('memory tools', () => {
-  it('registers all eight tools with their names', async () => {
+  it('registers all nine tools with their names', async () => {
     const { box } = await toolkit()
     expect([...box.defs.keys()].sort()).toEqual([
       'memory_consolidate',
       'memory_edit',
+      'memory_expand',
       'memory_forget',
       'memory_import',
       'memory_profile',
@@ -401,9 +402,70 @@ describe('memory tools', () => {
       approvalGate: { request: async () => true },
       sessionQuery: undefined,
     })
-    expect(box.defs.size).toBe(8)
+    expect(box.defs.size).toBe(9)
     disposer()
     expect(box.defs.size).toBe(0)
     expect(box.disposeCalls).toBe(1)
+  })
+
+  it('memory_expand returns the cited excerpt by fact id', async () => {
+    const { box, harness, readSessionImpl } = await toolkit()
+    const fact = await harness.domain.remember(makeFact({ workspacePath: WS, sessionId: 'past-sess', seq: 42, text: 'pnpm store is local' }))
+    readSessionImpl.mockResolvedValueOnce({
+      session: { id: 'past-sess', cwd: WS },
+      events: [
+        { type: 'user/message', seq: 40, data: { content: [{ type: 'text', text: 'how does pnpm work?' }] } },
+        { type: 'assistant/message', seq: 42, data: { message: { content: [{ type: 'text', text: 'pnpm store is local per workspace.' }] } } },
+        { type: 'tool/result', seq: 43, data: { message: { content: [{ type: 'tool-result', toolCallId: 't1', content: [{ type: 'text', text: 'exit 0' }] }] } } },
+      ],
+    })
+    const result = await call(box, 'memory_expand', { id: fact.id }, execFor())
+    expect(String(result)).toContain('fact')
+    expect(String(result)).toContain('cited to session past-sess#42')
+    expect(String(result)).toContain('pnpm store is local per workspace.')
+    expect(String(result)).toContain('how does pnpm work?')
+    // Real tool/result blocks are not text blocks — they stay out of the excerpt.
+    expect(String(result)).not.toContain('exit 0')
+    expect(readSessionImpl).toHaveBeenCalledWith('past-sess')
+  })
+
+  it('memory_expand accepts an explicit session_id + seq citation', async () => {
+    const { box, readSessionImpl } = await toolkit()
+    readSessionImpl.mockResolvedValueOnce({
+      session: { id: 'past-sess', cwd: WS },
+      events: [{ type: 'user/message', seq: 7, data: { content: [{ type: 'text', text: 'use tabs.' }] } }],
+    })
+    const result = await call(box, 'memory_expand', { session_id: 'past-sess', seq: 7 }, execFor())
+    expect(String(result)).toContain('cited to session past-sess#7')
+    expect(String(result)).toContain('use tabs.')
+  })
+
+  it('memory_expand fails on unknown fact id, stale seq, and invalid arg combos', async () => {
+    const { box, readSessionImpl } = await toolkit()
+    await expectMemoryError(call(box, 'memory_expand', { id: 'nope' }, execFor()), 'MEMORY_NOT_FOUND')
+    readSessionImpl.mockResolvedValueOnce({ session: { id: 'past-sess', cwd: WS }, events: [] })
+    await expectMemoryError(
+      call(box, 'memory_expand', { session_id: 'past-sess', seq: 1 }, execFor()),
+      'MEMORY_NOT_FOUND',
+    )
+    await expectMemoryError(call(box, 'memory_expand', { session_id: 'x' }, execFor()), 'MEMORY_INVALID_ARGS')
+    await expectMemoryError(
+      call(box, 'memory_expand', { id: 'a', session_id: 'x', seq: 1 }, execFor()),
+      'MEMORY_INVALID_ARGS',
+    )
+  })
+
+  it('memory_expand enforces exact-cwd authorization and fails closed without session-query', async () => {
+    const { box, readSessionImpl } = await toolkit()
+    readSessionImpl.mockResolvedValueOnce({ session: { id: 'foreign', cwd: '/elsewhere' }, events: [] })
+    await expectMemoryError(
+      call(box, 'memory_expand', { session_id: 'foreign', seq: 1 }, execFor()),
+      'MEMORY_UNAUTHORIZED',
+    )
+    const bare = await toolkit({ withSessionQuery: false })
+    await expectMemoryError(
+      call(bare.box, 'memory_expand', { session_id: 'past-sess', seq: 1 }, execFor()),
+      'MEMORY_DISABLED',
+    )
   })
 })
