@@ -553,9 +553,11 @@ export async function openMemoryDomain(
     async addProposal(proposal: Proposal): Promise<void> {
       const now = Date.now()
       const ttl = config.proposalTtlDays * 86_400_000
+      // The cap is PER WORKSPACE (review residual #35): other workspaces'
+      // pendings must neither expire here nor count against this cap.
       const pending = [...proposals.entries()]
         .map(([, item]) => item)
-        .filter(item => item.state === 'pending')
+        .filter(item => item.workspacePath === proposal.workspacePath && item.state === 'pending')
         .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
       for (const stale of pending.filter(item => now - item.createdAt > ttl)) {
         await proposals.put(stale.id, { ...stale, state: 'expired' })
@@ -595,9 +597,11 @@ export async function openMemoryDomain(
     async addAlarm(alarm: Alarm): Promise<void> {
       const now = Date.now()
       const ttl = config.guardAlarmTtlHours * 3_600_000
+      // The cap is PER WORKSPACE (review residual #35): other workspaces'
+      // alarms must neither expire here nor count against this cap.
       const active = [...alarms.entries()]
         .map(([, item]) => item)
-        .filter(item => item.state === 'active')
+        .filter(item => item.workspacePath === alarm.workspacePath && item.state === 'active')
         .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
       for (const stale of active.filter(item => now - item.createdAt > ttl)) {
         await alarms.put(stale.id, { ...stale, state: 'expired' })

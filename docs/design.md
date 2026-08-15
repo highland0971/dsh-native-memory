@@ -41,10 +41,17 @@ One domain, JSON backend (web profile default), unit file
 
 - `global`: `{ initialized: true }` — creation marker.
 - table `facts` — key `id` (uuid). Value: `{ id, workspacePath, kind, text,
-  tags[], sessionId, seq, createdAt, updatedAt, state }`. `kind ∈
-  {preference, fact, convention, decision}`.
+  tags[], sessionId, seq, createdAt, updatedAt, accessCount?,
+  lastAccessedAt?, state }`. `kind ∈ {preference, fact, convention,
+  decision}`; `accessCount`/`lastAccessedAt` (v0.3.0, optional — rows written
+  before them parse unchanged) feed the within-tier recall tie-breaks.
 - table `profiles` — key `workspacePath`. Value: `{ workspacePath, entries[],
   updatedAt }` — the always-injected, bounded workspace profile.
+- table `proposals` (v0.3.0) — key `id`. Pending LLM-distilled candidates;
+  consumed by the approval-gated `memory_remember` on exact-text match,
+  expired by TTL.
+- table `alarms` (v0.3.0) — key `id`. Compaction drift alarms (dropped
+  anchors), rendered as verify-data, expired by TTL.
 
 Zod v4 schemas (matching DSH's own storage-domain dependency). Validation at
 the durable boundary is the facility's job; writes await backend durability
@@ -58,7 +65,15 @@ log, and each fact names the session and log position that justified it.
 **Caps** (config): facts ≤ 300/workspace, fact ≤ 2000 chars, profile ≤ 8
 entries × 240 chars. Recall over the facts table is a bounded in-memory scan
 (the JSON backend has no FTS) — deterministic, zero-token-waste, and the cap
-keeps it cheap.
+keeps it cheap. Proposal and alarm caps are per workspace, oldest-first.
+
+**Write amplification (accepted)**: `memory_recall` bumps the access
+counters of every returned fact (up to 50 metadata-only puts per call on the
+JSON backend); best-effort — a failed counter write never fails the read.
+**Soft deletes**: facts/proposals/alarms are archived/expired in place, never
+hard-deleted, so the tables grow slowly over time; accepted for
+reconstructability (provenance stays in the session log and the domain unit
+keeps the row).
 
 ## 4. Recall paths
 
@@ -202,12 +217,16 @@ no custom SQLite of its own (vs dsh-memento, dsh-mneme), not user-global
 - **v0.1.0** (this repo): domain + tools + approval gate + profile section +
   bundle patch + tests + docs. Local verification on this environment first
   (see docs/handoff.md), then community release.
-- v0.2.0: `<memory-profile>` framing hardening (delimiter tags, `\u003c`
-  escaping, mirror session-reference), profile auto-consolidation tool,
-  `memory_import` from session logs.
-- v0.3.0: relevance-scored recall (RRF over tags + text), fact dedup/conflict
-  detection, headless profile support path (opt-in memory unit via
-  storage-json mount in headless).
+- v0.2.0 (shipped): `<memory-profile>` framing hardening (delimiter tags,
+  `\u003c` escaping, mirror session-reference), `memory_consolidate`,
+  `memory_import`, three-tier recall scoring with CJK bigrams.
+- v0.3.0 (shipped): `memory_expand` (citation → original excerpt),
+  within-tier freshness/access recall signals, secret redaction (write
+  policy + always-on injection masking), read-only browser settings page,
+  opt-in session-end proposals (LLM proposes, human approves), compaction
+  drift guard, `memory_export` Markdown mirror.
+- Later: semantic recall tier (opt-in embeddings) — deliberately deferred;
+  cross-workspace/multi-agent sharing — out of scope by design.
 
 ## 12. Contribution path (target: DeepSeek community)
 

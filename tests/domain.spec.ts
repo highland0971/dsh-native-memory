@@ -180,6 +180,27 @@ describe('memory domain over the real facility', () => {
     expect(domain.listAllActive().every(fact => fact.id !== gone.id)).toBe(true)
   })
 
+  it('proposal and alarm caps are per workspace: other workspaces do not count', async () => {
+    const { domain } = await bootMemory({ proposalMaxPending: 2, guardAlarmMax: 2 })
+    const now = Date.now()
+    const otherProposal = { id: 'op1', workspacePath: OTHER, text: 'other', sessionId: 's', createdAt: now, state: 'pending' as const }
+    await domain.addProposal(otherProposal)
+    for (const id of ['p1', 'p2', 'p3']) {
+      await domain.addProposal({ id, workspacePath: WS, text: `proposal ${id}`, sessionId: 's', createdAt: now, state: 'pending' })
+    }
+    // WS hits its own cap (2) while OTHER's proposal is untouched; WS's
+    // oldest expired, OTHER's row is not counted toward WS.
+    expect(domain.pendingProposals(WS).map(proposal => proposal.id)).toEqual(['p2', 'p3'])
+    expect(domain.pendingProposals(OTHER).map(proposal => proposal.id)).toEqual(['op1'])
+
+    await domain.addAlarm({ id: 'oa1', workspacePath: OTHER, sessionId: 's', vanishedAnchors: ['other-anchor'], createdAt: now, state: 'active' })
+    for (const id of ['a1', 'a2', 'a3']) {
+      await domain.addAlarm({ id, workspacePath: WS, sessionId: 's', vanishedAnchors: [`anchor-${id}`], createdAt: now, state: 'active' })
+    }
+    expect(domain.activeAlarms(WS).map(alarm => alarm.id)).toEqual(['a2', 'a3'])
+    expect(domain.activeAlarms(OTHER).map(alarm => alarm.id)).toEqual(['oa1'])
+  })
+
   it('archive is a soft delete: row stays, listActive drops it, double-archive is false', async () => {
     const { domain } = await bootMemory()
     const fact = await domain.remember(makeFact({ workspacePath: WS }))

@@ -59,6 +59,12 @@ export const Config = z.object({
   guardAlarmTtlHours: z.number().int().min(1).max(720).default(24),
   /** Upper bound on active drift alarms per workspace (oldest expire first). */
   guardAlarmMax: z.number().int().min(1).max(16).default(3),
-})
+}).refine(
+  config => config.recallFreshWindowDays <= config.recallStaleWindowDays,
+  {
+    message: 'recallFreshWindowDays must be ≤ recallStaleWindowDays '
+      + '(otherwise the intermediate "current" freshness window is unreachable)',
+  },
+)
 
 export type ConfigType = z.infer<typeof Config>
