@@ -1,4 +1,4 @@
-// Tool surface tests: the six tools register into ctx.tools; write tools
+// Tool surface tests: the seven tools register into ctx.tools; write tools
 // route through the approval gate (mocked) and fail closed; read tools never
 // ask; caller workspace authorization enforced via exec.agent.session.header.cwd.
 //
@@ -114,9 +114,10 @@ function expectMemoryError(promise: Promise<unknown>, code: string) {
 }
 
 describe('memory tools', () => {
-  it('registers all six tools with their names', async () => {
+  it('registers all seven tools with their names', async () => {
     const { box } = await toolkit()
     expect([...box.defs.keys()].sort()).toEqual([
+      'memory_consolidate',
       'memory_edit',
       'memory_forget',
       'memory_profile',
@@ -323,6 +324,18 @@ describe('memory tools', () => {
     await expectMemoryError(call(box, 'memory_edit', { id: 'x' }, execFor()), 'MEMORY_INVALID_ARGS')
   })
 
+  it('memory_consolidate suggests merges and reports the budget without asking', async () => {
+    const { box, harness, asks } = await toolkit()
+    await harness.domain.remember(makeFact({ workspacePath: WS, text: 'release verification runs from the web session' }))
+    await harness.domain.remember(makeFact({ workspacePath: WS, text: 'release verification runs in the web session' }))
+    const result = await call(box, 'memory_consolidate', {}, execFor())
+    const text = String(result)
+    expect(text).toContain('2 active facts; budget remaining:')
+    expect(text).toContain('Merge candidates')
+    expect(text).toContain('%')
+    expect(asks).toHaveLength(0)
+  })
+
   it('disposing the effect unregisters the tools', async () => {
     const { ctx, box } = fakeToolsCtx()
     const harness = await bootMemory()
@@ -335,7 +348,7 @@ describe('memory tools', () => {
       approvalGate: { request: async () => true },
       sessionQuery: undefined,
     })
-    expect(box.defs.size).toBe(6)
+    expect(box.defs.size).toBe(7)
     disposer()
     expect(box.defs.size).toBe(0)
     expect(box.disposeCalls).toBe(1)
