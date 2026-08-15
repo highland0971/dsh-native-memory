@@ -4,15 +4,21 @@ DeepSeek Harness currently accepts no external PRs into the core repository —
 the sanctioned way to contribute is the ecosystem (see their CONTRIBUTING.md).
 For this project that means:
 
-1. **Code contributions**: PRs to this repository. Keep the architecture
+1. **Workflow (mandatory since v0.2.0)**: every change starts as a GitHub
+   issue on the current milestone; one issue = one branch = one PR, squash
+   merged into `main`. See `AGENTS.md` in the repo root for the full
+   convention, including the DSH-sandbox specifics (credentials, retries,
+   Contents-API fallback).
+2. **Code contributions**: PRs to this repository. Keep the architecture
    contract in `docs/design.md` truthful: any API dependency must cite its
    `file:line` in a tested deepseek-harness revision.
-2. **New capabilities**: follow the existing pattern — typed domain wrapper
+3. **New capabilities**: follow the existing pattern — typed domain wrapper
    in `src/`, tools registered in `src/tools.ts`, caps in `src/config.ts`,
    tests under `tests/`, docs in `docs/`.
-3. **Releases**: bump `CHANGELOG.md`, `npm publish`, then update the
-   awesome-dsh-plugin listing (one line in both `README.md` and
-   `README.zh.md` of that repo).
+4. **Releases**: follow the `dsh-plugin-release` skill (bump `CHANGELOG.md`,
+   tag, CI green, `npm publish`, update the awesome-dsh-plugin listing —
+   for v0.2.0+ the listing entry already exists and only needs a version/
+   description touch-up when relevant).
 
 ## Repo conventions
 
