@@ -9,7 +9,7 @@
 //     execute(args, exec: ToolRunContext): Promise<unknown>,
 //   }
 //
-// Tool set (seven tools — the design §5 list plus consolidation):
+// Tool set (eight tools — the design §5 list plus consolidation and import):
 //
 //   memory_remember  (write, approval-gated) — add or update one fact (or one
 //                    workspace profile entry) in the caller's workspace.
@@ -22,6 +22,8 @@
 //   memory_profile   (read, never gated)     — show the caller's workspace
 //   memory_consolidate (read, never gated)   — near-duplicate merge suggestions
 //                    plus the remaining cap budget; merges land through the gated edit/forget tools.
+//   memory_import     (write, approval-gated)  — import candidate facts from a past
+//                    session's log by literal query match, with (sessionId, seq) provenance.
 //                    profile and how to propose changes (writes go through
 //                    memory_remember).
 //
@@ -201,9 +203,31 @@ const profileArgs = z.object({})
 
 const consolidateArgs = z.object({})
 
+const importArgs = z.object({
+  session_id: z.string().min(1),
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(5).optional(),
+  kind: z.enum(['preference', 'fact', 'convention', 'decision']).optional(),
+  tags: z.array(z.string()).optional(),
+})
+
 // ---------------------------------------------------------------------------
 
-/** Register all seven tools; returns the composite disposer. */
+/**
+ * Deterministic sentence extraction around a literal query match: split on
+ * sentence endings and line breaks, keep only sentences containing the
+ * case-folded query. Pure function — the import candidates for memory_import.
+ */
+export function extractCandidateSentences(text: string, query: string): string[] {
+  const folded = query.toLowerCase()
+  if (!text.toLowerCase().includes(folded)) return []
+  return text
+    .split(/(?<=[。.!?！？])\s*|\n+/)
+    .map(sentence => sentence.trim())
+    .filter(sentence => sentence.length > 0 && sentence.toLowerCase().includes(folded))
+}
+
+/** Register all eight tools; returns the composite disposer. */
 export function registerMemoryTools(ctx: Context, service: MemoryService): () => void {
   return ctx.effect(() => {
     const disposers: Array<() => void> = [
@@ -532,6 +556,103 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           ).join('\n')
           return `${header}\n\nMerge candidates (near-duplicate text):\n${body}\n\n`
             + `Apply with memory_edit (rewrite one fact to the merged text) + memory_forget (drop the other) — both ask the human.`
+        },
+      }),
+
+      ctx.tools.register({
+        name: 'memory_import',
+        description:
+          'Import candidate facts from a PAST session of this workspace by literal query match: each matching sentence in that session\'s log becomes '
+          + 'a fact proposal, one approval ask per fact, stored with the original (sessionId, seq) provenance.',
+        parameters: {
+          type: 'object',
+          properties: {
+            session_id: { type: 'string', description: 'Past session id to import from (must be in this workspace)' },
+            query: { type: 'string', description: 'Literal query; sentences containing it become candidates' },
+            limit: { type: 'integer', minimum: 1, maximum: 5, description: 'Maximum candidate facts (default 3)' },
+            kind: { type: 'string', enum: ['preference', 'fact', 'convention', 'decision'], description: 'Fact category for all imports' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['session_id', 'query'],
+        },
+        output: TEXT_OUTPUT,
+        execute: async (rawArgs, exec) => {
+          const caller = callerOf(exec as ToolExec)
+          const args = parseArgs(importArgs, rawArgs, 'memory_import')
+          if (service.sessionQuery === undefined) {
+            throw new MemoryError('MEMORY_DISABLED', 'memory_import: the session-query service is not available in this profile')
+          }
+          if (args.session_id === caller.sessionId) {
+            throw new MemoryError('MEMORY_INVALID_ARGS', 'memory_import: target a PAST session, not the calling one')
+          }
+          const domain = await openDomain(service)
+          let snapshot
+          try {
+            snapshot = await service.sessionQuery.readSession(args.session_id)
+          } catch (error) {
+            throw new MemoryError('MEMORY_UNAVAILABLE', `memory_import: could not read session ${args.session_id}: ${String(error)}`, { cause: error })
+          }
+          // Exact-cwd authorization (the same rule dsh-tool-session-query applies).
+          if (snapshot.header.cwd !== caller.cwd) {
+            throw new MemoryError('MEMORY_UNAUTHORIZED', `memory_import: session ${args.session_id} is not in this workspace`)
+          }
+          const candidates: Array<{ text: string; seq: number }> = []
+          for (const event of snapshot.events) {
+            const blocks = event.data?.message?.content ?? event.data?.content ?? []
+            for (const block of blocks) {
+              if (block.type !== 'text' || block.text === undefined) continue
+              for (const sentence of extractCandidateSentences(block.text, args.query)) {
+                candidates.push({ text: truncate(sentence, service.config.maxFactChars), seq: event.seq ?? 0 })
+              }
+            }
+          }
+          const limited = candidates.slice(0, args.limit ?? 3)
+          if (limited.length === 0) {
+            return `no matching text in past session ${args.session_id} for ${JSON.stringify(args.query)}`
+          }
+          // Budget pre-check BEFORE any approval ask (same discipline as #2).
+          if (domain.activeCount(caller.cwd) + limited.length > service.config.maxFactsPerWorkspace) {
+            throw new MemoryError(
+              'MEMORY_CAP_EXCEEDED',
+              `importing ${limited.length} facts would exceed the ${service.config.maxFactsPerWorkspace} cap; consolidate first (memory_consolidate)`,
+            )
+          }
+          const imported: string[] = []
+          let denied = 0
+          for (const candidate of limited) {
+            const reason = writeReason(`Import fact from session ${args.session_id}#${candidate.seq}`, caller.cwd, truncate(candidate.text, 120))
+            const allowed = await service.approvalGate.request({
+              agent: caller.agent,
+              toolName: 'memory_import',
+              callId: exec.callId,
+              reason,
+              signal: exec.signal,
+            })
+            if (!allowed) {
+              denied += 1
+              continue
+            }
+            const now = Date.now()
+            const fact: Fact = {
+              id: randomUUID(),
+              workspacePath: caller.cwd,
+              kind: args.kind ?? 'fact',
+              text: candidate.text,
+              tags: args.tags ?? [],
+              sessionId: args.session_id,
+              seq: candidate.seq,
+              createdAt: now,
+              updatedAt: now,
+              state: 'active',
+            }
+            const stored = await domain.remember(fact)
+            imported.push(`${stored.id} (cited to session ${args.session_id}#${stored.seq})`)
+          }
+          if (imported.length === 0) {
+            return `no facts imported from session ${args.session_id}: none of the ${limited.length} candidates were approved`
+          }
+          const deniedPart = denied > 0 ? `; ${denied} candidate(s) not approved` : ''
+          return `imported ${imported.length} fact(s) from session ${args.session_id}${deniedPart}:\n${imported.join('\n')}`
         },
       }),
     ]

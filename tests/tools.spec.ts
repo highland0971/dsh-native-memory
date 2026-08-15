@@ -1,4 +1,4 @@
-// Tool surface tests: the seven tools register into ctx.tools; write tools
+// Tool surface tests: the eight tools register into ctx.tools; write tools
 // route through the approval gate (mocked) and fail closed; read tools never
 // ask; caller workspace authorization enforced via exec.agent.session.header.cwd.
 //
@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ApprovalGate } from '../src/approval.ts'
 import type { ToolExec } from '../src/types.ts'
-import { registerMemoryTools } from '../src/tools.ts'
+import { extractCandidateSentences, registerMemoryTools } from '../src/tools.ts'
 import type { MemoryService } from '../src/tools.ts'
 import { bootMemory, makeFact } from './helpers/harness.ts'
 import type { MemoryHarness } from './helpers/harness.ts'
@@ -69,6 +69,7 @@ interface ToolKit {
   readonly service: MemoryService
   readonly asks: AskRecord[]
   readonly searchImpl: ReturnType<typeof vi.fn>
+  readonly readSessionImpl: ReturnType<typeof vi.fn>
 }
 
 async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean; config?: Record<string, unknown> } = {}): Promise<ToolKit> {
@@ -82,6 +83,7 @@ async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean;
     }),
   }
   const searchImpl = vi.fn()
+  const readSessionImpl = vi.fn()
   const service: MemoryService = {
     config: harness.config,
     storageDomainAvailable: true,
@@ -89,10 +91,10 @@ async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean;
     openedDomain: () => harness.domain,
     ensureDomain: () => {},
     approvalGate: gate,
-    sessionQuery: options.withSessionQuery === false ? undefined : { searchSessions: searchImpl },
+    sessionQuery: options.withSessionQuery === false ? undefined : { searchSessions: searchImpl, readSession: readSessionImpl },
   }
   registerMemoryTools(ctx, service)
-  return { box, harness, service, asks, searchImpl }
+  return { box, harness, service, asks, searchImpl, readSessionImpl }
 }
 
 function execFor(cwd: string | undefined = WS, events: readonly unknown[] = [1, 2, 3]): ToolExec {
@@ -114,12 +116,13 @@ function expectMemoryError(promise: Promise<unknown>, code: string) {
 }
 
 describe('memory tools', () => {
-  it('registers all seven tools with their names', async () => {
+  it('registers all eight tools with their names', async () => {
     const { box } = await toolkit()
     expect([...box.defs.keys()].sort()).toEqual([
       'memory_consolidate',
       'memory_edit',
       'memory_forget',
+      'memory_import',
       'memory_profile',
       'memory_recall',
       'memory_remember',
@@ -336,6 +339,56 @@ describe('memory tools', () => {
     expect(asks).toHaveLength(0)
   })
 
+  it('extractCandidateSentences keeps only matching sentences', () => {
+    const text = 'we decided to use pnpm. later we used npm. the build runs with pnpm test.'
+    const hits = extractCandidateSentences(text, 'pnpm')
+    expect(hits).toEqual(['we decided to use pnpm.', 'the build runs with pnpm test.'])
+    expect(extractCandidateSentences(text, 'yarn')).toEqual([])
+  })
+
+  it('memory_import asks per candidate and stores facts with the source session provenance', async () => {
+    const { box, harness, asks, readSessionImpl } = await toolkit()
+    readSessionImpl.mockResolvedValueOnce({
+      header: { id: 'past-sess', cwd: WS },
+      events: [
+        { type: 'user/message', seq: 10, data: { message: { content: [{ type: 'text', text: 'we decided to use pnpm. later we used npm.' }] } } },
+        { type: 'assistant/message', seq: 11, data: { message: { content: [{ type: 'text', text: 'the build runs with pnpm test.' }] } } },
+      ],
+    })
+    const result = await call(box, 'memory_import', { session_id: 'past-sess', query: 'pnpm', kind: 'decision' }, execFor())
+    expect(String(result)).toContain('imported 2 fact(s) from session past-sess')
+    expect(asks.filter(ask => ask.toolName === 'memory_import')).toHaveLength(2)
+    const facts = harness.domain.listActive(WS)
+    expect(facts).toHaveLength(2)
+    expect(facts.map(fact => fact.sessionId)).toEqual(['past-sess', 'past-sess'])
+    expect(facts.map(fact => fact.seq).sort()).toEqual([10, 11])
+    expect(facts.every(fact => fact.kind === 'decision')).toBe(true)
+  })
+
+  it('memory_import skips denied candidates and reports none imported', async () => {
+    const { box, harness, readSessionImpl } = await toolkit({ allowed: false })
+    readSessionImpl.mockResolvedValueOnce({
+      header: { id: 'past-sess', cwd: WS },
+      events: [{ type: 'assistant/message', seq: 5, data: { message: { content: [{ type: 'text', text: 'we use pnpm here.' }] } } }],
+    })
+    const result = await call(box, 'memory_import', { session_id: 'past-sess', query: 'pnpm' }, execFor())
+    expect(String(result)).toContain('none of the 1 candidates were approved')
+    expect(harness.domain.activeCount(WS)).toBe(0)
+  })
+
+  it('memory_import enforces exact-cwd authorization and rejects the calling session', async () => {
+    const { box, readSessionImpl } = await toolkit()
+    readSessionImpl.mockResolvedValueOnce({ header: { id: 'foreign', cwd: '/elsewhere' }, events: [] })
+    await expectMemoryError(
+      call(box, 'memory_import', { session_id: 'foreign', query: 'x' }, execFor()),
+      'MEMORY_UNAUTHORIZED',
+    )
+    await expectMemoryError(
+      call(box, 'memory_import', { session_id: 'sess-tool', query: 'x' }, execFor()),
+      'MEMORY_INVALID_ARGS',
+    )
+  })
+
   it('disposing the effect unregisters the tools', async () => {
     const { ctx, box } = fakeToolsCtx()
     const harness = await bootMemory()
@@ -348,7 +401,7 @@ describe('memory tools', () => {
       approvalGate: { request: async () => true },
       sessionQuery: undefined,
     })
-    expect(box.defs.size).toBe(7)
+    expect(box.defs.size).toBe(8)
     disposer()
     expect(box.defs.size).toBe(0)
     expect(box.disposeCalls).toBe(1)
