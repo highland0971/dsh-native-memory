@@ -74,6 +74,19 @@ describe('renderProfile', () => {
     expect(text).toContain('- two')
   })
 
+  it('wraps the block in a delimiter tag pair', () => {
+    const text = renderProfile(['one'], WS)
+    expect(text.startsWith('<memory-profile>\n')).toBe(true)
+    expect(text.endsWith('\n</memory-profile>')).toBe(true)
+  })
+
+  it('escapes literal < in entries and the workspace label', () => {
+    const text = renderProfile(['do not run <script>alert(1)</script>'], '/tmp/evil<dir>')
+    expect(text).toContain('\\u003cscript>alert(1)\\u003c/script>')
+    expect(text).toContain('evil\\u003cdir>')
+    expect(text).not.toContain('<script>')
+  })
+
   it('renders empty for an empty profile', () => {
     expect(renderProfile([], WS)).toBe('')
   })
