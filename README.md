@@ -58,6 +58,10 @@ A read-only browser page (settings → 记忆) lists every workspace's facts wit
 secrets masked; deletions are copied as a `memory_forget` instruction and land
 in the chat through the approval gate.
 
+Opt-in session-end proposals (`proposeOnSessionEnd: true`): one cheap LLM call
+distills a finished session into candidate facts shown in the next sessions;
+they become facts only through the approval-gated `memory_remember`.
+
 ## Development
 
 ```sh

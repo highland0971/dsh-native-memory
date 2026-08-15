@@ -44,3 +44,16 @@
         # Write tools (remember / edit / forget) pass the host approval
         # stack; every ask/outcome pair lands on the requesting session log.
         approvalWrites: true
+        # Writes reject secret-shaped text (tokens / keys / passwords).
+        # 'mask' stores them masked; 'off' stores as-is (injection always masks).
+        secretPolicy: reject
+        # Session-end memory proposal (OFF by default): the LLM distills the
+        # finished session into candidate facts shown in the NEXT sessions'
+        # prompt; they become facts only through the approval-gated
+        # memory_remember. The LLM proposes, the human approves.
+        proposeOnSessionEnd: false
+        proposalProvider: deepseek
+        proposalModel: deepseek-v4-flash
+        proposalMaxFacts: 8
+        proposalMaxPending: 16
+        proposalTtlDays: 7

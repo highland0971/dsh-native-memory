@@ -390,6 +390,21 @@ describe('memory tools', () => {
     )
   })
 
+  it('memory_remember consumes a pending proposal with matching text', async () => {
+    const { box, harness } = await toolkit({ config: { proposeOnSessionEnd: true } })
+    await harness.domain.addProposal({
+      id: 'p1',
+      workspacePath: WS,
+      text: 'uses tabs for indentation',
+      sessionId: 'sess-old',
+      createdAt: Date.now(),
+      state: 'pending',
+    })
+    const result = await call(box, 'memory_remember', { text: 'uses tabs for indentation', kind: 'convention' }, execFor())
+    expect(String(result)).toContain('stored fact')
+    expect(harness.domain.pendingProposals(WS)).toEqual([])
+  })
+
   it('disposing the effect unregisters the tools', async () => {
     const { ctx, box } = fakeToolsCtx()
     const harness = await bootMemory()
