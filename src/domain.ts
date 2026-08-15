@@ -199,6 +199,77 @@ export interface MemoryDomain {
   close(): Promise<void>
 }
 
+// ---------------------------------------------------------------------------
+// Consolidation suggestions (deterministic, zero-dependency near-duplicate
+// detection for the memory_consolidate tool).
+
+/** Jaccard similarity at or above this marks two facts merge candidates. */
+export const CONSOLIDATION_SIMILARITY = 0.55
+/** Hard bound on the number of suggested pairs per call. */
+export const CONSOLIDATION_MAX_PAIRS = 5
+
+export interface ConsolidationCandidate {
+  readonly a: Fact
+  readonly b: Fact
+  /** Jaccard similarity of the two facts' token sets, 0..1. */
+  readonly similarity: number
+  /** A proposed combined text (bounded) the model can refine via memory_edit. */
+  readonly suggestedText: string
+}
+
+/**
+ * Case-fold one fact's text into a token set: ASCII words plus CJK runs and
+ * their overlapping bigrams (the same vocabulary the recall tokenizer uses).
+ */
+export function factTokens(text: string): Set<string> {
+  const tokens = new Set<string>()
+  const runs = text.toLowerCase().match(/[\u3400-\u9fff]+|[^\u3400-\u9fff]+/g) ?? []
+  for (const run of runs) {
+    if (/^[\u3400-\u9fff]+$/.test(run)) {
+      tokens.add(run)
+      for (let i = 0; i < run.length - 1; i += 1) tokens.add(run.slice(i, i + 2))
+    } else {
+      for (const word of run.split(/[^a-z0-9]+/)) {
+        if (word.length > 0) tokens.add(word)
+      }
+    }
+  }
+  return tokens
+}
+
+/**
+ * Deterministic near-duplicate scan over active facts: all pairs whose token
+ * sets overlap by at least {@link CONSOLIDATION_SIMILARITY} (Jaccard), most
+ * similar first, capped at {@link CONSOLIDATION_MAX_PAIRS}. Pure function —
+ * reads only; the actual merge lands through the gated edit/forget tools.
+ */
+export function suggestConsolidations(facts: readonly Fact[]): ConsolidationCandidate[] {
+  const tokenSets = facts.map(fact => ({ fact, tokens: factTokens(fact.text) }))
+  const candidates: ConsolidationCandidate[] = []
+  for (let i = 0; i < tokenSets.length; i += 1) {
+    for (let j = i + 1; j < tokenSets.length; j += 1) {
+      const left = tokenSets[i]!
+      const right = tokenSets[j]!
+      const intersection = [...left.tokens].filter(token => right.tokens.has(token)).length
+      const union = new Set([...left.tokens, ...right.tokens]).size
+      if (union === 0) continue
+      const similarity = intersection / union
+      if (similarity < CONSOLIDATION_SIMILARITY) continue
+      candidates.push({
+        a: left.fact,
+        b: right.fact,
+        similarity,
+        suggestedText: `${left.fact.text} ${right.fact.text}`.slice(0, 600),
+      })
+    }
+  }
+  return candidates
+    .sort((x, y) => y.similarity - x.similarity
+      || x.a.id.localeCompare(y.a.id)
+      || x.b.id.localeCompare(y.b.id))
+    .slice(0, CONSOLIDATION_MAX_PAIRS)
+}
+
 /**
  * Case-fold and split a recall query into unique tokens. Whitespace-separated
  * words are further split between CJK and non-CJK runs (so mixed queries like

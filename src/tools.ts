@@ -9,7 +9,7 @@
 //     execute(args, exec: ToolRunContext): Promise<unknown>,
 //   }
 //
-// Tool set (six tools — the design §5 list):
+// Tool set (seven tools — the design §5 list plus consolidation):
 //
 //   memory_remember  (write, approval-gated) — add or update one fact (or one
 //                    workspace profile entry) in the caller's workspace.
@@ -20,6 +20,8 @@
 //   memory_search    (read, never gated)     — FTS over past sessions via
 //                    ctx.sessionQuery.searchSessions, exact-cwd authorized.
 //   memory_profile   (read, never gated)     — show the caller's workspace
+//   memory_consolidate (read, never gated)   — near-duplicate merge suggestions
+//                    plus the remaining cap budget; merges land through the gated edit/forget tools.
 //                    profile and how to propose changes (writes go through
 //                    memory_remember).
 //
@@ -36,6 +38,7 @@ import { z } from 'zod'
 import type { ApprovalGate } from './approval.ts'
 import type { ConfigType } from './config.ts'
 import type { Fact, MemoryDomain } from './domain.ts'
+import { suggestConsolidations } from './domain.ts'
 import { MemoryError, hasCode } from './errors.ts'
 import type { CallerAgent, SessionQueryServiceLike, ToolExec } from './types.ts'
 
@@ -196,9 +199,11 @@ const searchArgs = z.object({
 
 const profileArgs = z.object({})
 
+const consolidateArgs = z.object({})
+
 // ---------------------------------------------------------------------------
 
-/** Register all six tools; returns the composite disposer. */
+/** Register all seven tools; returns the composite disposer. */
 export function registerMemoryTools(ctx: Context, service: MemoryService): () => void {
   return ctx.effect(() => {
     const disposers: Array<() => void> = [
@@ -500,6 +505,33 @@ export function registerMemoryTools(ctx: Context, service: MemoryService): () =>
           const body = profile.entries.map((entry, index) => `${index}. ${entry}`).join('\n')
           return `${header}\n${body}\n\nUpdate with memory_remember: target:"profile", profile_index:<n> to replace entry n, `
             + `empty text to drop it, or omit profile_index to append.`
+        },
+      }),
+
+      ctx.tools.register({
+        name: 'memory_consolidate',
+        description:
+          'Suggest deterministic merge candidates among this workspace\'s active facts (near-duplicate text detection) and report the remaining '
+          + 'cap budget. Read-only: the actual merge lands through memory_edit / memory_forget, which ask the human.',
+        parameters: { type: 'object', properties: {} },
+        output: TEXT_OUTPUT,
+        execute: async (rawArgs, exec) => {
+          const caller = callerOf(exec as ToolExec)
+          parseArgs(consolidateArgs, rawArgs, 'memory_consolidate')
+          const domain = await openDomain(service)
+          const facts = domain.listActive(caller.cwd)
+          const budget = service.config.maxFactsPerWorkspace - facts.length
+          const header = `${facts.length} active facts; budget remaining: ${Math.max(0, budget)} of ${service.config.maxFactsPerWorkspace}`
+          const candidates = suggestConsolidations(facts)
+          if (candidates.length === 0) {
+            return `${header}\nno consolidation candidates — the active facts look distinct`
+          }
+          const body = candidates.map((candidate, index) =>
+            `${index + 1}. ${candidate.a.id} + ${candidate.b.id} `
+            + `(${Math.round(candidate.similarity * 100)}%): ${truncate(candidate.suggestedText, 300)}`,
+          ).join('\n')
+          return `${header}\n\nMerge candidates (near-duplicate text):\n${body}\n\n`
+            + `Apply with memory_edit (rewrite one fact to the merged text) + memory_forget (drop the other) — both ask the human.`
         },
       }),
     ]

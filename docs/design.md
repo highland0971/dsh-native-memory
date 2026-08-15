@@ -83,7 +83,9 @@ keeps it cheap.
 
 `memory_remember` / `memory_edit` / `memory_forget` — writes, approval-gated
 when `approvalWrites: true` (default). `memory_recall` / `memory_search` /
-`memory_profile` — reads, never gated.
+`memory_profile` — reads, never gated. `memory_consolidate` (v0.2.0) —
+read-only near-duplicate merge suggestions plus the remaining cap budget;
+merges land through the gated edit/forget tools.
 
 Tool count trades prompt cost against capability; keep the set closed until
 usage data says otherwise.

@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 
-import { MEMORY_DOMAIN_VERSION, defineMemoryDomain, openMemoryDomain } from '../src/domain.ts'
+import { MEMORY_DOMAIN_VERSION, defineMemoryDomain, factTokens, openMemoryDomain, suggestConsolidations } from '../src/domain.ts'
 import type { StorageDomainFacility } from '../src/domain.ts'
 import { bootMemory, makeFact, resolveConfig } from './helpers/harness.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -181,4 +181,32 @@ describe('memory domain over the real facility', () => {
       openMemoryDomain(facility as unknown as StorageDomainFacility, resolveConfig()),
     ).rejects.toMatchObject({ name: 'StorageError', code: 'version-mismatch' })
   })
+describe('consolidation suggestions', () => {
+  it('flags near-duplicate facts by token overlap and skips distinct ones', () => {
+    const a = makeFact({ text: 'the release verification runs from the web session' })
+    const b = makeFact({ text: 'release verification runs in the web session' })
+    const c = makeFact({ text: 'tests run with pnpm test' })
+    const candidates = suggestConsolidations([a, b, c])
+    expect(candidates).toHaveLength(1)
+    expect(new Set([candidates[0]?.a.id, candidates[0]?.b.id])).toEqual(new Set([a.id, b.id]))
+    expect(candidates[0]?.similarity).toBeGreaterThanOrEqual(0.55)
+    expect(candidates[0]?.suggestedText).toContain('runs from the web session')
+  })
+
+  it('is deterministic and capped', () => {
+    const facts = Array.from({ length: 12 }, (_, i) =>
+      makeFact({ text: `shared common base wording number ${i}` }))
+    const candidates = suggestConsolidations(facts)
+    expect(candidates.length).toBeLessThanOrEqual(5)
+    const again = suggestConsolidations(facts)
+    expect(candidates.map(c => `${c.a.id}:${c.b.id}`)).toEqual(again.map(c => `${c.a.id}:${c.b.id}`))
+  })
+
+  it('tokenizes CJK bigrams for similarity', () => {
+    const tokens = factTokens('交互验证约定')
+    expect(tokens.has('验证')).toBe(true)
+    expect(tokens.has('互验')).toBe(true)
+  })
+})
+
 })
