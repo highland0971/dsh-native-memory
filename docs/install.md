@@ -52,6 +52,33 @@ chars, approval on) — the partial override above is therefore safe.
 5. ~/.dsh/storages/dsh_memory.json exists and holds the fact.
 ```
 
+## Headless profiles (opt-in storage)
+
+Headless profiles (`dsh-base` + `dsh-headless`) do not mount the
+storage-domain facility — the web-app bundle owns those rows — so memory
+tools answer `MEMORY_DISABLED` there by default, and the plugin stays mounted
+without hanging (the designed degradation path). Opt in by inserting the
+storage rows in the headless profile's user patch
+(`~/.dsh/profiles/headless/cordis.patch.yml`):
+
+```yaml
+- insert:
+    - id: storage
+      name: '@deepseek-ai/dsh-storage'
+    - id: storage-json
+      name: '@deepseek-ai/dsh-storage-json'
+      config:
+        root: !!js dshHomePath('storages')
+    - id: storage-domain
+      name: '@deepseek-ai/dsh-storage-domain'
+      config:
+        backend: json
+```
+
+The memory unit is shared with the web profile (same `~/.dsh/storages`
+root), so headless sessions recall the same workspace facts. Writes stay
+approval-gated; without a UI answerer they fail closed.
+
 ## Uninstall
 
 ```sh
