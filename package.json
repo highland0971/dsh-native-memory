@@ -1,7 +1,7 @@
 {
   "name": "dsh-native-memory",
   "description": "Native, per-workspace long-term memory for DeepSeek Harness: facts and profiles on DSH's own storage-domain, cross-session recall through session-query FTS, approval-gated writes, and cited provenance — no external server, no extra runtime dependency.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.mjs",
@@ -48,9 +48,6 @@
   },
   "dependencies": {
     "zod": "^4.4.3"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"

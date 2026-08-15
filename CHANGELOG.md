@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-08-15
+
+### Added
+
+- `memory_consolidate` (read-only): deterministic near-duplicate merge
+  suggestions (Jaccard over ASCII words + CJK bigrams, capped at 5 pairs)
+  plus the remaining fact budget; merges land through the gated edit/forget
+  tools.
+- `memory_import` (approval-gated): import candidate facts from a past
+  session's log by literal query match — exact-cwd authorized, self
+  excluded, one approval ask per candidate, stored with the original
+  `(sessionId, seq)` provenance.
+
+### Changed
+
+- `memory_recall`: three-tier deterministic scoring — exact tag match >
+  case-insensitive text substring > fuzzy tag overlap, CJK bigram
+  tokenization, multi-word phrase boost; bilingual query guidance in the
+  tool description.
+- Caps are pre-checked BEFORE the approval ask, so over-cap writes no longer
+  waste a human approval (the domain layer stays the authoritative
+  race-proof gate).
+- `memory_search` excludes the calling session from its results.
+
+### Fixed
+
+- Profile injection hardening: `<memory-profile>` delimiter tags plus
+  `\u003c` escaping of literal `<` in entries and the workspace label
+  (session-reference-style).
+
+### Docs
+
+- Headless profiles: documented the opt-in storage-domain mount patch
+  (shares the same `~/.dsh/storages` unit with the web profile).
+
 ## [0.1.0] — 2026-08-15
 
 ### Added

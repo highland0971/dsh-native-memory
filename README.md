@@ -39,8 +39,10 @@ the memory tools to every session. Details and configuration:
 | `memory_remember` | add/update a fact in this workspace | approval |
 | `memory_edit` | replace a fact | approval |
 | `memory_forget` | archive a fact (soft delete) | approval |
-| `memory_recall` | deterministic scan over this workspace's facts | none |
-| `memory_search` | FTS over this workspace's past sessions | none |
+| `memory_recall` | deterministic three-tier keyword scan (tags > text > fuzzy) | none |
+| `memory_search` | FTS over this workspace's past sessions (caller excluded) | none |
+| `memory_consolidate` | near-duplicate merge suggestions + cap budget | none |
+| `memory_import` | import candidate facts from a past session's log | approval (per fact) |
 | `memory_profile` | read the always-injected workspace profile | none |
 
 Every fact records its origin `(sessionId, seq)` — memory stays

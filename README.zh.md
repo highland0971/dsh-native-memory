@@ -34,8 +34,10 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 | `memory_remember` | 在本工作区新增/更新一条事实 | 需要 |
 | `memory_edit` | 替换一条事实 | 需要 |
 | `memory_forget` | 归档一条事实（软删除） | 需要 |
-| `memory_recall` | 确定性扫描本工作区的事实 | 不需要 |
-| `memory_search` | 全文检索本工作区的历史会话 | 不需要 |
+| `memory_recall` | 确定性三档关键词扫描（标签 > 文本 > 模糊） | 不需要 |
+| `memory_search` | 全文检索本工作区的历史会话（排除当前会话） | 不需要 |
+| `memory_consolidate` | 近重复合并建议 + 容量预算 | 不需要 |
+| `memory_import` | 从历史会话日志导入候选事实 | 需要（逐条） |
 | `memory_profile` | 读取常驻注入的工作区档案 | 不需要 |
 
 每条事实都记录来源 `(sessionId, seq)`——记忆始终可从无损会话日志还原。
