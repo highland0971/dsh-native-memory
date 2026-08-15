@@ -191,6 +191,8 @@ export interface MemoryDomain {
   getFact(workspacePath: string, id: string): Fact | undefined
   /** Active facts of one workspace, newest-first (recall tiebreak order). */
   listActive(workspacePath: string): Fact[]
+  /** Every active fact across all workspaces, newest-first (browser page). */
+  listAllActive(): Fact[]
   /**
    * Deterministic bounded scan: text matches first, tags second, recency
    * tiebreak. An empty query lists the newest active facts.
@@ -400,6 +402,13 @@ export async function openMemoryDomain(
 
     listActive(workspacePath: string): Fact[] {
       return activeIn(workspacePath).sort(compareRecency)
+    },
+
+    listAllActive(): Fact[] {
+      return [...facts.entries()]
+        .map(([, fact]) => fact)
+        .filter(fact => fact.state === 'active')
+        .sort(compareRecency)
     },
 
     recall(workspacePath: string, query?: string, limit: number = RECALL_MAX_HITS): Fact[] {

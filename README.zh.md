@@ -46,6 +46,9 @@ dsh plugin --profile web add /path/to/this/repo  # 从本地检出安装
 写入默认拒绝密钥形态文本（token / 密钥 / 密码）；bundle patch 里 `secretPolicy: "mask" | "off"`
 可放宽。凭据赋值检测可能误伤 ≥16 字符的良性 `token: …` 值。注入与工具输出恒打码。
 
+浏览器只读页面（设置 → 记忆）列出所有工作区的事实（密钥已打码）；删除会复制为一条
+`memory_forget` 指令，在对话中经审批门执行。
+
 ## 开发
 
 ```sh

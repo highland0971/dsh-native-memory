@@ -24,6 +24,7 @@ import { registerProfileSection } from './prompt.ts'
 import { registerMemoryTools } from './tools.ts'
 import type { MemoryService } from './tools.ts'
 import type { SessionQueryServiceLike } from './types.ts'
+import { registerFactsRoute } from './web.ts'
 
 export const name = 'dsh-native-memory'
 
@@ -75,9 +76,11 @@ export function apply(ctx: Context, config: unknown) {
   ctx.effect(() => {
     const disposeTools = registerMemoryTools(ctx, service)
     const disposeProfile = resolved.injectProfile ? registerProfileSection(ctx, service) : undefined
+    const disposeWeb = registerFactsRoute(ctx, service)
     return async () => {
       disposeTools()
       disposeProfile?.()
+      disposeWeb?.()
       // Close the domain if it ever opened: writes drain, the unit releases,
       // and the domain name frees up for a later open.
       if (domainPromise !== undefined) {
