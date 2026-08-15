@@ -77,6 +77,26 @@ export interface SessionQueryServiceLike {
     },
     exec?: { readonly signal?: AbortSignal },
   ): Promise<SessionSearchPageLike>
+  /** Read one complete session log (live-preferred); used by memory_import. */
+  readSession(sessionId: string): Promise<SessionLogSnapshotLike>
+}
+
+/** One durable log event (structural view of SessionEvent's text surface). */
+export interface SessionEventLike {
+  readonly type?: string
+  readonly seq?: number
+  readonly data?: {
+    readonly message?: {
+      readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>
+    }
+    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>
+  }
+}
+
+/** `ctx.sessionQuery.readSession` result (structural view). */
+export interface SessionLogSnapshotLike {
+  readonly header: { readonly id: string; readonly cwd?: string }
+  readonly events: readonly SessionEventLike[]
 }
 
 /**
