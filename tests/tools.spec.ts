@@ -353,7 +353,7 @@ describe('memory tools', () => {
     readSessionImpl.mockResolvedValueOnce({
       session: { id: 'past-sess', cwd: WS },
       events: [
-        { type: 'user/message', seq: 10, data: { message: { content: [{ type: 'text', text: 'we decided to use pnpm. later we used npm.' }] } } },
+        { type: 'user/message', seq: 10, data: { content: [{ type: 'text', text: 'we decided to use pnpm. later we used npm.' }] } },
         { type: 'assistant/message', seq: 11, data: { message: { content: [{ type: 'text', text: 'the build runs with pnpm test.' }] } } },
       ],
     })
