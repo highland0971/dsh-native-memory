@@ -138,6 +138,36 @@ describe('compaction guard registration', () => {
     expect(harness.domain.activeAlarms(WS)).toEqual([])
   })
 
+  it('derives anchors from nested tool outputs and masks secrets before storage', async () => {
+    const harness = await bootMemory()
+    const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
+    registerCompactionGuard(guardCtx(listeners), guardService(harness))
+    const secret = `ghp_${'a'.repeat(36)}`
+    listeners.get('session/event')?.[0]?.(
+      {
+        id: 'sess-tool',
+        header: { cwd: WS },
+        events: [
+          { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: `use token "${secret}" for pushes` }] } },
+          { type: 'tool/result', seq: 2, data: { message: { content: [{ type: 'tool-result', toolCallId: 't', content: [{ type: 'text', text: 'ERR_MODULE_NOT_FOUND' }] }] } } },
+        ],
+      },
+      {
+        type: 'compaction/summary',
+        data: { summary: 'the module failed to load; nothing else.', shadowedSeqs: [1, 2] },
+      },
+    )
+    await vi.waitFor(() => {
+      expect(harness.domain.activeAlarms(WS)).toHaveLength(1)
+    })
+    const alarm = harness.domain.activeAlarms(WS)[0]!
+    // The nested tool-output error token is a vanished anchor…
+    expect(alarm.vanishedAnchors).toContain('ERR_MODULE_NOT_FOUND')
+    // …and the quoted secret anchor was masked BEFORE storage.
+    expect(alarm.vanishedAnchors.some(anchor => anchor.includes('[REDACTED]'))).toBe(true)
+    expect(alarm.vanishedAnchors.some(anchor => anchor.includes('ghp_'))).toBe(false)
+  })
+
   it('enforces the active alarm cap and ttl', async () => {
     const harness = await bootMemory({ guardAlarmMax: 2, guardAlarmTtlHours: 24 })
     const hour = 3_600_000

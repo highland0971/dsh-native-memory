@@ -81,15 +81,22 @@ export interface SessionQueryServiceLike {
   readSession(sessionId: string): Promise<SessionLogSnapshotLike>
 }
 
+/** One content block (structural view); tool-result blocks nest their payload. */
+export interface SessionContentBlockLike {
+  readonly type?: string
+  readonly text?: string
+  readonly content?: ReadonlyArray<SessionContentBlockLike>
+}
+
 /** One durable log event (structural view of SessionEvent's text surface). */
 export interface SessionEventLike {
   readonly type?: string
   readonly seq?: number
   readonly data?: {
     readonly message?: {
-      readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>
+      readonly content?: ReadonlyArray<SessionContentBlockLike>
     }
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>
+    readonly content?: ReadonlyArray<SessionContentBlockLike>
   }
 }
 

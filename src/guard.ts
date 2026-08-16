@@ -16,7 +16,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 
-import { eventText } from './tools.ts'
+import { maskSecrets } from './redaction.ts'
 import type { MemoryService } from './tools.ts'
 import type { SessionEventLike } from './types.ts'
 
@@ -116,9 +116,13 @@ async function onSessionEvent(
   if (cwd === undefined || cwd.length === 0) return
 
   const seqSet = new Set(shadowedSeqs.filter((seq): seq is number => typeof seq === 'number'))
+  // The guard derives the shadowed text itself instead of reusing eventText:
+  // tool outputs live in nested tool-result blocks, and dropped literal
+  // anchors (paths, error codes) appear there more often than anywhere else
+  // (review residual #35).
   const shadowedText = (session.events ?? [])
     .filter(event => event.seq !== undefined && seqSet.has(event.seq))
-    .map(eventText)
+    .map(deepEventText)
     .join('\n')
   if (shadowedText.length === 0) return
 
@@ -131,11 +135,36 @@ async function onSessionEvent(
     id: randomUUID(),
     workspacePath: cwd,
     sessionId: session.id,
-    vanishedAnchors: vanished,
+    // Mask BEFORE storage, matching the proposal convention: the anchors
+    // themselves are injected into later prompts, and the render-side mask
+    // stays as defense in depth.
+    vanishedAnchors: vanished.map(anchor => maskSecrets(anchor)),
     ...(event.data?.shadowedRange === undefined ? {} : { shadowedRange: event.data.shadowedRange }),
     createdAt: Date.now(),
     state: 'active',
   })
+}
+
+/**
+ * Event text with a single-level descent into tool-result blocks: harness
+ * tool results carry one level of nested text blocks (ToolResultBlock.content,
+ * packages/llm/llm/src/types.ts) and never nest further.
+ */
+function deepEventText(event: SessionEventLike): string {
+  const blocks = event.data?.message?.content ?? event.data?.content ?? []
+  const parts: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text !== undefined) {
+      parts.push(block.text)
+      continue
+    }
+    if (block.type === 'tool-result' && Array.isArray(block.content)) {
+      for (const inner of block.content) {
+        if (inner.type === 'text' && inner.text !== undefined) parts.push(inner.text)
+      }
+    }
+  }
+  return parts.join(' ')
 }
 
 /**
