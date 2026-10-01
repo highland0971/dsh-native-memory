@@ -72,4 +72,26 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-(empty — see the v0.2.0 roadmap in docs/design.md §11)
+### Fixed
+
+- **0.2.0-rc.2 compatibility (issue #39)**: the `Session` event-array accessor
+  this plugin read (`session.events`) does not exist in 0.2.0-rc.2 — nor has it
+  existed since 0.1.5-rc.2 — so every `memory_*` tool threw
+  `Cannot read properties of undefined (reading 'length')` while the compaction
+  guard and the session-end proposal degraded silently. Provenance now reads
+  `Session.seq` ("the next event's sequence number — always the log length"),
+  the guard resolves shadowed turns through `ctx.sessionQuery.readSession`
+  (live-preferred), and the proposal distills `Session.deriveMessages()`.
+- Compaction guard: the `compaction/summary` payload is `ContentBlock[]`, not a
+  string; the summary is flattened to text so anchor comparison runs again.
+  Neither a missing `sessionQuery` nor a failed `readSession` is silent any
+  more — both log a warning, matching the write path's fail-closed convention.
+- Dropped the retired `tool-result` content-block descent: session format v4
+  refuses that wrapper and 0.2.0-rc.2 removed the block type, so the branch was
+  unreachable.
+
+### Docs
+
+- `docs/upgrade-0.2.0-rc.2-compat.md`: the evidence trail for the port — the
+  ten neighbouring contracts re-verified against 0.2.0-rc.2 with `file:line`
+  citations, the reproduction, and the verification recipe.

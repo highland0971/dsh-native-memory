@@ -22,9 +22,8 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
 import { maskSecrets } from './redaction.ts'
-import { eventText } from './tools.ts'
 import type { MemoryService } from './tools.ts'
-import type { SessionEventLike } from './types.ts'
+import type { MessageLike } from './types.ts'
 /** Upper bound on the transcript fed to the distiller (tail kept). */
 export const PROPOSAL_TRANSCRIPT_MAX_CHARS = 16_000
 /** How many pending proposals the prompt shows at most. */
@@ -81,7 +80,13 @@ interface EventSink {
 export interface DisposedSessionLike {
   readonly id: string
   readonly header?: { readonly cwd?: string }
-  readonly events?: readonly SessionEventLike[]
+  /**
+   * `Session.deriveMessages()` (packages/core/session/src/index.ts:860): the
+   * model-visible conversation projected from the session surface. This
+   * replaces the removed `session.events` array (issue #39) and is the right
+   * distillation input — it is exactly what the model saw.
+   */
+  readonly deriveMessages?: () => readonly MessageLike[]
 }
 
 const PROPOSAL_SYSTEM = [
@@ -137,6 +142,19 @@ async function distill(
 }
 
 /**
+ * Concatenated text of one model-visible message. Parity with the previous
+ * event-level extraction: top-level text blocks only — the distillation
+ * prompt does not need nested tool-result payloads.
+ */
+function messageText(message: MessageLike): string {
+  const blocks = message.content ?? []
+  return blocks
+    .filter(block => block.type === 'text' && block.text !== undefined)
+    .map(block => block.text as string)
+    .join(' ')
+}
+
+/**
  * One distillation run for a disposed session; never throws — a failed
  * proposal must not disturb session shutdown.
  */
@@ -145,10 +163,25 @@ async function runProposal(ctx: Context, service: MemoryService, session: Dispos
   if (cwd === undefined || cwd.length === 0) return
   const llm = ctx.get('llm') as LlmRuntimeLike | undefined
   if (llm === undefined) return
-  const events = session.events ?? []
+  // The transcript comes from the session's own message projection: 0.2.0-rc.2
+  // removed the raw `session.events` array (issue #39), and deriveMessages() is
+  // the official synchronous view of what the model saw.
+  if (typeof session.deriveMessages !== 'function') {
+    ctx.logger('memory').warn(
+      'session-end proposal: the disposed session exposes no deriveMessages() — proposal skipped',
+    )
+    return
+  }
+  let messages: readonly MessageLike[]
+  try {
+    messages = session.deriveMessages()
+  } catch (error) {
+    ctx.logger('memory').warn(`session-end proposal: deriveMessages() threw: ${String(error)}`)
+    return
+  }
   let transcript = ''
-  for (const event of events) {
-    const piece = eventText(event)
+  for (const message of messages) {
+    const piece = messageText(message)
     if (piece.length > 0) transcript += piece + '\n'
   }
   if (transcript.trim().length === 0) return

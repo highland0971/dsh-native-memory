@@ -97,10 +97,11 @@ async function toolkit(options: { allowed?: boolean; withSessionQuery?: boolean;
   return { box, harness, service, asks, searchImpl, readSessionImpl }
 }
 
-function execFor(cwd: string | undefined = WS, events: readonly unknown[] = [1, 2, 3]): ToolExec {
+function execFor(cwd: string | undefined = WS, seq = 3): ToolExec {
   return {
     callId: 'call-1',
-    agent: { session: { id: 'sess-tool', header: { cwd }, events } },
+    // Session.seq is the log length — the seq the next event lands at (issue #39).
+    agent: { session: { id: 'sess-tool', header: { cwd }, seq } },
     signal: new AbortController().signal,
   }
 }
@@ -175,7 +176,7 @@ describe('memory tools', () => {
     await call(box, 'memory_remember', { text: 'old text', tags: ['a'] }, execFor())
     const id = harness.domain.listActive(WS)[0]?.id as string
 
-    await call(box, 'memory_edit', { id, text: 'new text' }, execFor(WS, [1, 2, 3, 4]))
+    await call(box, 'memory_edit', { id, text: 'new text' }, execFor(WS, 4))
     expect(harness.domain.getFact(WS, id)).toMatchObject({ text: 'new text', tags: ['a'], seq: 4 })
 
     await call(box, 'memory_forget', { id }, execFor())
@@ -264,7 +265,7 @@ describe('memory tools', () => {
     await expectMemoryError(call(box, 'memory_recall', {}, noAgent), 'MEMORY_MISSING_AGENT')
     const noCwd = {
       callId: 'c',
-      agent: { session: { id: 'sess-1', header: {}, events: [] } },
+      agent: { session: { id: 'sess-1', header: {}, seq: 0 } },
       signal: new AbortController().signal,
     }
     await expectMemoryError(call(box, 'memory_remember', { text: 'x' }, noCwd), 'MEMORY_UNAUTHORIZED')

@@ -62,7 +62,11 @@ function fakeLlm(outputs: string[]): { prepareCall: PrepareCall & ReturnType<typ
   return { prepareCall, calls }
 }
 
-function proposalCtx(listeners: Map<string, Array<(payload: unknown) => void>>, llm?: unknown): Context {
+function proposalCtx(
+  listeners: Map<string, Array<(payload: unknown) => void>>,
+  llm?: unknown,
+  warn = vi.fn(),
+): Context {
   const ctx = {
     on: (name: string, cb: (payload: unknown) => void) => {
       const list = listeners.get(name) ?? []
@@ -71,6 +75,7 @@ function proposalCtx(listeners: Map<string, Array<(payload: unknown) => void>>, 
     },
     get: (name: string) => (name === 'llm' ? llm : undefined),
     effect: (cb: () => () => void) => cb(),
+    logger: () => ({ warn }),
   }
   return ctx as unknown as Context
 }
@@ -90,7 +95,13 @@ function proposalService(harness: MemoryHarness): MemoryService {
 interface DisposedFixture {
   readonly id: string
   readonly header?: { readonly cwd?: string }
-  readonly events?: readonly unknown[]
+  /** Session.deriveMessages(): the model-visible conversation (issue #39). */
+  readonly deriveMessages?: () => ReadonlyArray<{ readonly role?: string; readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }> }>
+}
+
+/** One model-visible message fixture. */
+function msg(role: string, text: string) {
+  return { role, content: [{ type: 'text', text }] }
 }
 
 describe('session-end proposals', () => {
@@ -127,9 +138,9 @@ describe('session-end proposals', () => {
     const disposed: DisposedFixture = {
       id: 'sess-old',
       header: { cwd: WS },
-      events: [
-        { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'we use pnpm for builds.' }] } },
-        { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: `the push token is ghp_${'a'.repeat(36)}` }] } } },
+      deriveMessages: () => [
+        msg('user', 'we use pnpm for builds.'),
+        msg('assistant', `the push token is ghp_${'a'.repeat(36)}`),
       ],
     }
     listeners.get('session/disposed')?.[0]?.(disposed)
@@ -161,7 +172,7 @@ describe('session-end proposals', () => {
     listeners.get('session/disposed')?.[0]?.({
       id: 'sess-x',
       header: { cwd: WS },
-      events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'hello' }] } }],
+      deriveMessages: () => [msg('user', 'hello')],
     })
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(harness.domain.pendingProposals(WS)).toEqual([])
@@ -173,7 +184,7 @@ describe('session-end proposals', () => {
     listeners2.get('session/disposed')?.[0]?.({
       id: 'sess-bad',
       header: { cwd: WS },
-      events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'hello' }] } }],
+      deriveMessages: () => [msg('user', 'hello')],
     })
     await vi.waitFor(() => expect(llm.prepareCall).toHaveBeenCalledTimes(1))
     expect(harness.domain.pendingProposals(WS)).toEqual([])
@@ -184,10 +195,32 @@ describe('session-end proposals', () => {
     listeners3.get('session/disposed')?.[0]?.({
       id: 'sess-h',
       header: {},
-      events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'hello' }] } }],
+      deriveMessages: () => [msg('user', 'hello')],
     })
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(llm.prepareCall).toHaveBeenCalledTimes(1)
+  })
+
+  it('warns observably when the disposed session exposes no deriveMessages()', async () => {
+    const harness = await bootMemory({ proposeOnSessionEnd: true })
+    const listeners = new Map<string, Array<(payload: unknown) => void>>()
+    const llm = fakeLlm(['["never used"]'])
+    const warn = vi.fn()
+    registerSessionEndProposal(
+      proposalCtx(listeners, { prepareCall: llm.prepareCall }, warn),
+      proposalService(harness),
+    )
+
+    // An older/other harness build with no message projection: the proposal is
+    // skipped LOUDLY rather than silently (issue #39 — silent fallbacks hid
+    // the removed session.events accessor for weeks).
+    listeners.get('session/disposed')?.[0]?.({ id: 'sess-nodm', header: { cwd: WS } })
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalled()
+    })
+    expect(String(warn.mock.calls[0]?.[0])).toContain('deriveMessages')
+    expect(llm.prepareCall).not.toHaveBeenCalled()
+    expect(harness.domain.pendingProposals(WS)).toEqual([])
   })
 
   it('enforces the pending cap: oldest pendings expire first', async () => {

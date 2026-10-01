@@ -100,7 +100,7 @@ describe('memory_export tool', () => {
     const cwd = await tempDir('export-tool-')
     const exec: ToolExec = {
       callId: 'call-x',
-      agent: { session: { id: 'sess-tool', header: { cwd }, events: [1] } },
+      agent: { session: { id: 'sess-tool', header: { cwd }, seq: 1 } },
       signal: new AbortController().signal,
     }
     try {

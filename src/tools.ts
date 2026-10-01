@@ -92,7 +92,10 @@ function callerOf(exec: ToolExec): Caller {
       'this session has no workspace cwd; per-workspace memory needs a workspace-scoped session',
     )
   }
-  return { agent, cwd, sessionId: agent.session.id, seq: agent.session.events.length }
+  // Session.seq IS the log length — "the next event's sequence number"
+  // (packages/core/session/src/index.ts:680-682). The removed
+  // `session.events.length` was this same number (issue #39).
+  return { agent, cwd, sessionId: agent.session.id, seq: agent.session.seq }
 }
 
 function parseArgs<S extends z.ZodType>(schema: S, raw: unknown, tool: string): z.infer<S> {

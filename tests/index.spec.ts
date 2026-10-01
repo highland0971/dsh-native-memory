@@ -66,7 +66,7 @@ function fakeCtx(options: { storageDomain?: unknown; approval?: unknown } = {}) 
 
 const exec = (cwd: string): ToolExec => ({
   callId: 'call-1',
-  agent: { session: { id: 'sess', header: { cwd }, events: [1] } },
+  agent: { session: { id: 'sess', header: { cwd }, seq: 1 } },
   signal: new AbortController().signal,
 })
 

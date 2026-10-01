@@ -6,19 +6,25 @@
 // zero extra model call, and riding our verified systemPrompt channel
 // instead of an agent/pre-step injection.
 //
-// Event contract (packages/compaction/compaction-basic/src/region.ts:442+):
-// after a successful compaction the session appends 'compaction/summary'
-// with data { summary, shadowedSeqs, shadowedRange: {start, end}, … }.
-// 'session/event' (packages/core/session/src/index.ts:76) fires per appended
-// event with (session, event); the append-only session log still holds the
-// shadowed turns, so the pre-compaction text can be re-derived by seq.
+// Event contract (packages/compaction/compaction/src/types.ts:34-50, identical
+// in 0.1.5-rc.2 and 0.2.0-rc.2): after a successful compaction the session
+// appends 'compaction/summary' with data { summary: ContentBlock[],
+// shadowedSeqs, shadowedRange: {start, end}, … }.
+// 'session/event' (packages/core/session/src/index.ts:405) fires per appended
+// event with (session, event).
+//
+// The shadowed text is re-derived from the durable log by seq — the session
+// object itself carries NO event array in 0.2.0-rc.2 (issue #39), so it comes
+// from ctx.sessionQuery.readSession, whose corpus is live-preferred
+// (packages/session-query/session-query/src/corpus.ts:34-35) and therefore
+// still sees a live session's log at compaction time.
 
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 
 import { maskSecrets } from './redaction.ts'
 import type { MemoryService } from './tools.ts'
-import type { SessionEventLike } from './types.ts'
+import type { SessionContentBlockLike, SessionEventLike } from './types.ts'
 
 /** How many vanished anchors one alarm carries at most. */
 export const ALARM_ANCHOR_MAX = 5
@@ -27,14 +33,14 @@ export const ALARM_ANCHOR_MAX = 5
 export interface GuardSessionLike {
   readonly id: string
   readonly header?: { readonly cwd?: string }
-  readonly events?: readonly SessionEventLike[]
 }
 
 /** Structural view of a 'compaction/summary' event's data. */
 export interface CompactionSummaryLike {
   readonly type?: string
   readonly data?: {
-    readonly summary?: string
+    /** ContentBlock[] on the wire (compaction/src/types.ts:37), never a plain string. */
+    readonly summary?: readonly SessionContentBlockLike[]
     readonly shadowedSeqs?: readonly unknown[]
     readonly shadowedRange?: { readonly start: number; readonly end: number }
   }
@@ -104,23 +110,46 @@ export function vanishedAnchors(anchors: readonly string[], summary: string): st
 // ---------------------------------------------------------------------------
 
 async function onSessionEvent(
+  ctx: Context,
   service: MemoryService,
   session: GuardSessionLike,
   event: CompactionSummaryLike,
 ): Promise<void> {
   if (event?.type !== 'compaction/summary') return
-  const summary = event.data?.summary
+  const summaryBlocks = event.data?.summary
   const shadowedSeqs = event.data?.shadowedSeqs
-  if (typeof summary !== 'string' || shadowedSeqs === undefined) return
+  if (summaryBlocks === undefined || shadowedSeqs === undefined) return
+  const summary = blocksText(summaryBlocks)
+  if (summary.length === 0) return
   const cwd = session.header?.cwd
   if (cwd === undefined || cwd.length === 0) return
 
   const seqSet = new Set(shadowedSeqs.filter((seq): seq is number => typeof seq === 'number'))
+  if (seqSet.size === 0) return
+
+  // The shadowed turns are re-read from the log: 0.2.0-rc.2's Session has no
+  // event array (issue #39), and readSession's corpus is live-preferred, so a
+  // compaction inside a live session still resolves its own events.
+  const query = service.sessionQuery
+  if (query === undefined) {
+    ctx.logger('memory').warn(
+      'compaction guard: sessionQuery is unavailable in this profile — drift check skipped',
+    )
+    return
+  }
+  const snapshot = await query.readSession(session.id).catch((error: unknown) => {
+    ctx.logger('memory').warn(
+      `compaction guard: cannot read session ${session.id} for the drift check: ${String(error)}`,
+    )
+    return undefined
+  })
+  if (snapshot === undefined) return
+
   // The guard derives the shadowed text itself instead of reusing eventText:
   // tool outputs live in nested tool-result blocks, and dropped literal
   // anchors (paths, error codes) appear there more often than anywhere else
   // (review residual #35).
-  const shadowedText = (session.events ?? [])
+  const shadowedText = snapshot.events
     .filter(event => event.seq !== undefined && seqSet.has(event.seq))
     .map(deepEventText)
     .join('\n')
@@ -146,23 +175,26 @@ async function onSessionEvent(
 }
 
 /**
- * Event text with a single-level descent into tool-result blocks: harness
- * tool results carry one level of nested text blocks (ToolResultBlock.content,
- * packages/llm/llm/src/types.ts) and never nest further.
+ * Concatenated text of one event body. Tool results arrive as `tool`-role
+ * messages whose content is already flat text blocks: session format v4
+ * refuses the retired `tool-result` wrapper and 0.2.0-rc.2 dropped the block
+ * type (retired-syntax.ts:6-9, llm/src/types.ts:137-145), so one level of
+ * text extraction is the whole contract.
  */
 function deepEventText(event: SessionEventLike): string {
   const blocks = event.data?.message?.content ?? event.data?.content ?? []
+  return blocksText(blocks)
+}
+
+/**
+ * Concatenated text of one content-block list. Used for both event bodies and
+ * the compaction summary, whose payload is `ContentBlock[]`
+ * (compaction/src/types.ts:37).
+ */
+function blocksText(blocks: readonly SessionContentBlockLike[]): string {
   const parts: string[] = []
   for (const block of blocks) {
-    if (block.type === 'text' && block.text !== undefined) {
-      parts.push(block.text)
-      continue
-    }
-    if (block.type === 'tool-result' && Array.isArray(block.content)) {
-      for (const inner of block.content) {
-        if (inner.type === 'text' && inner.text !== undefined) parts.push(inner.text)
-      }
-    }
+    if (block.type === 'text' && block.text !== undefined) parts.push(block.text)
   }
   return parts.join(' ')
 }
@@ -176,7 +208,9 @@ export function registerCompactionGuard(ctx: Context, service: MemoryService): (
   if (!service.config.compactionGuard) return undefined
   const events = ctx as unknown as EventSink
   events.on('session/event', (session: unknown, event: unknown) => {
-    void onSessionEvent(service, session as GuardSessionLike, event as CompactionSummaryLike).catch(() => {})
+    void onSessionEvent(ctx, service, session as GuardSessionLike, event as CompactionSummaryLike).catch(
+      () => {},
+    )
   })
   return () => {
     // Nothing extra: the event binding lives on the plugin fiber.
