@@ -62,7 +62,7 @@ async function openService() {
 }
 
 function agentWith(cwd: string | undefined) {
-  return { session: { id: 'sess-prompt', header: cwd === undefined ? {} : { cwd }, events: [] } }
+  return { session: { id: 'sess-prompt', header: cwd === undefined ? {} : { cwd }, seq: 0 } }
 }
 
 describe('renderProfile', () => {

@@ -1,20 +1,25 @@
 // Compaction drift guard tests: anchor extraction is deterministic and
 // distinctive; a compaction/summary event whose summary dropped anchors
 // records a bounded alarm with provenance and range; unrelated events and
-// fully-covered summaries are ignored; disabled-by-config and missing cwd
-// degrade silently.
+// fully-covered summaries are ignored; disabled-by-config, missing cwd, and
+// an unavailable sessionQuery degrade observably (issue #39 ported the
+// shadowed-event read to ctx.sessionQuery.readSession).
 
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 
 import { extractAnchors, registerCompactionGuard, vanishedAnchors } from '../src/guard.ts'
 import type { MemoryService } from '../src/tools.ts'
+import type { SessionEventLike } from '../src/types.ts'
 import { bootMemory } from './helpers/harness.ts'
 import type { MemoryHarness } from './helpers/harness.ts'
 
 const WS = '/home/user/project'
 
-function guardCtx(listeners: Map<string, Array<(session: unknown, event: unknown) => void>>): Context {
+function guardCtx(
+  listeners: Map<string, Array<(session: unknown, event: unknown) => void>>,
+  warn = vi.fn(),
+): Context {
   const ctx = {
     on: (name: string, cb: (session: unknown, event: unknown) => void) => {
       const list = listeners.get(name) ?? []
@@ -23,11 +28,17 @@ function guardCtx(listeners: Map<string, Array<(session: unknown, event: unknown
     },
     get: () => undefined,
     effect: (cb: () => () => void) => cb(),
+    logger: () => ({ warn }),
   }
   return ctx as unknown as Context
 }
 
-function guardService(harness: MemoryHarness): MemoryService {
+/** The guard now reads shadowed turns through readSession (live-preferred). */
+function guardService(
+  harness: MemoryHarness,
+  eventsBySession: Record<string, readonly SessionEventLike[]> = {},
+  readSessionImpl?: (sessionId: string) => Promise<never>,
+): MemoryService {
   return {
     config: harness.config,
     storageDomainAvailable: true,
@@ -35,7 +46,27 @@ function guardService(harness: MemoryHarness): MemoryService {
     openedDomain: () => harness.domain,
     ensureDomain: () => {},
     approvalGate: { request: async () => true },
-    sessionQuery: undefined,
+    sessionQuery: {
+      searchSessions: async () => ({ items: [] }),
+      readSession:
+        readSessionImpl ??
+        (async (sessionId: string) => ({
+          session: { id: sessionId },
+          events: eventsBySession[sessionId] ?? [],
+        })),
+    },
+  }
+}
+
+/** One compaction/summary event whose summary is ContentBlock[] on the wire. */
+function summaryEvent(text: string, shadowedSeqs: readonly number[], range?: { start: number; end: number }) {
+  return {
+    type: 'compaction/summary',
+    data: {
+      summary: [{ type: 'text', text }],
+      shadowedSeqs,
+      ...(range === undefined ? {} : { shadowedRange: range }),
+    },
   }
 }
 
@@ -79,26 +110,21 @@ describe('compaction guard registration', () => {
   it('records an alarm when the summary drops anchors, with provenance and range', async () => {
     const harness = await bootMemory()
     const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
-    registerCompactionGuard(guardCtx(listeners), guardService(harness))
+    registerCompactionGuard(
+      guardCtx(listeners),
+      guardService(harness, {
+        'sess-compact': [
+          { type: 'user/message', seq: 10, data: { content: [{ type: 'text', text: 'the fix sets "pnpm config store-dir" and PORT=3000.' }] } },
+          { type: 'assistant/message', seq: 11, data: { message: { content: [{ type: 'text', text: 'restart needed after change.' }] } } },
+          { type: 'tool/result', seq: 12, data: { message: { role: 'tool', content: [{ type: 'text', text: 'exit 0' }] } } },
+        ],
+      }),
+    )
 
-    const session = {
-      id: 'sess-compact',
-      header: { cwd: WS },
-      events: [
-        { type: 'user/message', seq: 10, data: { content: [{ type: 'text', text: 'the fix sets "pnpm config store-dir" and PORT=3000.' }] } },
-        { type: 'assistant/message', seq: 11, data: { message: { content: [{ type: 'text', text: 'restart needed after change.' }] } } },
-        { type: 'tool/result', seq: 12, data: { message: { content: [{ type: 'tool-result', toolCallId: 't', content: [{ type: 'text', text: 'exit 0' }] }] } } },
-      ],
-    }
-    const event = {
-      type: 'compaction/summary',
-      data: {
-        summary: 'the session tuned the pnpm store dir; nothing else matters.',
-        shadowedSeqs: [10, 11, 12],
-        shadowedRange: { start: 10, end: 12 },
-      },
-    }
-    listeners.get('session/event')?.[0]?.(session, event)
+    listeners.get('session/event')?.[0]?.(
+      { id: 'sess-compact', header: { cwd: WS } },
+      summaryEvent('the session tuned the pnpm store dir; nothing else matters.', [10, 11, 12], { start: 10, end: 12 }),
+    )
 
     await vi.waitFor(() => {
       expect(harness.domain.activeAlarms(WS)).toHaveLength(1)
@@ -114,58 +140,88 @@ describe('compaction guard registration', () => {
   it('ignores unrelated events and fully-covered summaries', async () => {
     const harness = await bootMemory()
     const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
-    registerCompactionGuard(guardCtx(listeners), guardService(harness))
+    registerCompactionGuard(
+      guardCtx(listeners),
+      guardService(harness, {
+        s: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'the token is PORT=3000' }] } }],
+        h: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'PORT=3000' }] } }],
+      }),
+    )
     const fire = (session: unknown, event: unknown) => listeners.get('session/event')?.[0]?.(session, event)
 
-    fire(
-      { id: 's', header: { cwd: WS }, events: [] },
-      { type: 'user/message', data: {} },
-    )
-    fire(
-      {
-        id: 's',
-        header: { cwd: WS },
-        events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'the token is PORT=3000' }] } }],
-      },
-      { type: 'compaction/summary', data: { summary: 'we fixed the PORT=3000 issue.', shadowedSeqs: [1] } },
-    )
+    fire({ id: 's', header: { cwd: WS } }, { type: 'user/message', data: {} })
+    fire({ id: 's', header: { cwd: WS } }, summaryEvent('we fixed the PORT=3000 issue.', [1]))
     // headless session (no cwd) even with vanished anchors
-    fire(
-      { id: 'h', header: {}, events: [{ type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'PORT=3000' }] } }] },
-      { type: 'compaction/summary', data: { summary: 'unrelated.', shadowedSeqs: [1] } },
-    )
+    fire({ id: 'h', header: {} }, summaryEvent('unrelated.', [1]))
     await new Promise(resolve => setTimeout(resolve, 30))
     expect(harness.domain.activeAlarms(WS)).toEqual([])
   })
 
-  it('derives anchors from nested tool outputs and masks secrets before storage', async () => {
+  it('derives anchors from tool-result messages and masks secrets before storage', async () => {
     const harness = await bootMemory()
     const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
-    registerCompactionGuard(guardCtx(listeners), guardService(harness))
-    const secret = `ghp_${'a'.repeat(36)}`
-    listeners.get('session/event')?.[0]?.(
-      {
-        id: 'sess-tool',
-        header: { cwd: WS },
-        events: [
-          { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: `use token "${secret}" for pushes` }] } },
-          { type: 'tool/result', seq: 2, data: { message: { content: [{ type: 'tool-result', toolCallId: 't', content: [{ type: 'text', text: 'ERR_MODULE_NOT_FOUND' }] }] } } },
+    registerCompactionGuard(
+      guardCtx(listeners),
+      guardService(harness, {
+        'sess-tool': [
+          { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: `use token "${`ghp_${'a'.repeat(36)}`}" for pushes` }] } },
+          { type: 'tool/result', seq: 2, data: { message: { role: 'tool', content: [{ type: 'text', text: 'ERR_MODULE_NOT_FOUND' }] } } },
         ],
-      },
-      {
-        type: 'compaction/summary',
-        data: { summary: 'the module failed to load; nothing else.', shadowedSeqs: [1, 2] },
-      },
+      }),
+    )
+    listeners.get('session/event')?.[0]?.(
+      { id: 'sess-tool', header: { cwd: WS } },
+      summaryEvent('the module failed to load; nothing else.', [1, 2]),
     )
     await vi.waitFor(() => {
       expect(harness.domain.activeAlarms(WS)).toHaveLength(1)
     })
     const alarm = harness.domain.activeAlarms(WS)[0]!
-    // The nested tool-output error token is a vanished anchor…
+    // The tool-result message's error token is a vanished anchor…
     expect(alarm.vanishedAnchors).toContain('ERR_MODULE_NOT_FOUND')
     // …and the quoted secret anchor was masked BEFORE storage.
     expect(alarm.vanishedAnchors.some(anchor => anchor.includes('[REDACTED]'))).toBe(true)
     expect(alarm.vanishedAnchors.some(anchor => anchor.includes('ghp_'))).toBe(false)
+  })
+
+  it('degrades observably when sessionQuery is unavailable (never silently)', async () => {
+    const harness = await bootMemory()
+    const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
+    const warn = vi.fn()
+    const service = guardService(harness)
+    registerCompactionGuard(guardCtx(listeners, warn), { ...service, sessionQuery: undefined })
+
+    listeners.get('session/event')?.[0]?.(
+      { id: 'sess-x', header: { cwd: WS } },
+      summaryEvent('the summary dropped everything.', [1]),
+    )
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalled()
+    })
+    expect(String(warn.mock.calls[0]?.[0])).toContain('sessionQuery is unavailable')
+    expect(harness.domain.activeAlarms(WS)).toEqual([])
+  })
+
+  it('contains a readSession failure without disturbing the session', async () => {
+    const harness = await bootMemory()
+    const listeners = new Map<string, Array<(session: unknown, event: unknown) => void>>()
+    const warn = vi.fn()
+    registerCompactionGuard(
+      guardCtx(listeners, warn),
+      guardService(harness, {}, async () => {
+        throw new Error('persistence offline')
+      }),
+    )
+
+    listeners.get('session/event')?.[0]?.(
+      { id: 'sess-y', header: { cwd: WS } },
+      summaryEvent('the summary dropped everything.', [1]),
+    )
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalled()
+    })
+    expect(String(warn.mock.calls[0]?.[0])).toContain('persistence offline')
+    expect(harness.domain.activeAlarms(WS)).toEqual([])
   })
 
   it('enforces the active alarm cap and ttl', async () => {

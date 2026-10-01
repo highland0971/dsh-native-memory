@@ -3,8 +3,14 @@
 // dsh-native-memory publishes a zero-runtime-import surface: the plugin code
 // imports only `zod` at runtime, never a `@deepseek-ai/dsh-*` package. The
 // interfaces below are the minimal structural contracts each seam guarantees,
-// verified against deepseek-harness 0.1.0-rc.5 (commit 47f9438) at the cited
+// verified against deepseek-harness 0.2.0-rc.2 (commit 99f6f02) at the cited
 // sources. The real services are duck-typed at runtime through `ctx.get`.
+//
+// Session API note (issue #39): the harness Session exposes `seq` — "the next
+// event's sequence number — always the log length" — and NOT an `events`
+// array (packages/core/session/src/index.ts:680-682, and no `get events` in
+// 0.2.0-rc.2 nor 0.1.5-rc.2). Callers that need event content read it through
+// `ctx.sessionQuery.readSession` (live-preferred) or `Session.deriveMessages()`.
 //
 // Type-only imports of the harness packages live in devDependencies so the
 // module still typechecks against the published contracts; nothing below
@@ -17,8 +23,13 @@ export interface CallerAgent {
     readonly id: string
     /** Session header; `cwd` is the exact workspace path authorization key. */
     readonly header: { readonly cwd?: string }
-    /** Durable event log; `length` is the seq the next event lands at. */
-    readonly events: readonly unknown[]
+    /**
+     * The seq the next event lands at — `Session.seq`, documented as "the next
+     * event's sequence number — always the log length"
+     * (packages/core/session/src/index.ts:680-682). This replaces the removed
+     * `session.events.length` (issue #39).
+     */
+    readonly seq: number
   }
 }
 
@@ -81,11 +92,17 @@ export interface SessionQueryServiceLike {
   readSession(sessionId: string): Promise<SessionLogSnapshotLike>
 }
 
-/** One content block (structural view); tool-result blocks nest their payload. */
+/**
+ * One model-facing content block (structural view). Only `text` is read by
+ * this plugin: 0.2.0-rc.2's `ContentBlockMap` carries text / reasoning / image
+ * / file / tool-call / tool-addition / tool-removal, and the released
+ * `tool-result` wrapper is refused outright by session format v4
+ * (packages/llm/llm/src/types.ts:137-145,
+ * packages/session/session-format-v3-to-v4/src/retired-syntax.ts:6-9).
+ */
 export interface SessionContentBlockLike {
   readonly type?: string
   readonly text?: string
-  readonly content?: ReadonlyArray<SessionContentBlockLike>
 }
 
 /** One durable log event (structural view of SessionEvent's text surface). */
@@ -93,7 +110,9 @@ export interface SessionEventLike {
   readonly type?: string
   readonly seq?: number
   readonly data?: {
+    /** A role-carrying message (`user` | `assistant` | `tool` | …). */
     readonly message?: {
+      readonly role?: string
       readonly content?: ReadonlyArray<SessionContentBlockLike>
     }
     readonly content?: ReadonlyArray<SessionContentBlockLike>
@@ -105,6 +124,18 @@ export interface SessionLogSnapshotLike {
   /** The real readSession returns the header under `session` (session-query src/index.ts). */
   readonly session: { readonly id: string; readonly cwd?: string }
   readonly events: readonly SessionEventLike[]
+}
+
+/**
+ * One model-visible conversation message, the shape `Session.deriveMessages()`
+ * returns (packages/llm/llm/src/message.ts:196 — every role extends a base
+ * carrying `content: readonly ContentBlock[]`). Used by the session-end
+ * proposal instead of the removed raw `session.events` (issue #39).
+ */
+export interface MessageLike {
+  /** `system` | `developer` | `user` | `assistant` | `tool`. */
+  readonly role?: string
+  readonly content?: ReadonlyArray<SessionContentBlockLike>
 }
 
 /**
